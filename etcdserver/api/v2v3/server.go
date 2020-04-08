@@ -19,14 +19,15 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/etcdserver"
-	"github.com/coreos/etcd/etcdserver/api"
-	pb "github.com/coreos/etcd/etcdserver/etcdserverpb"
-	"github.com/coreos/etcd/etcdserver/membership"
-	"github.com/coreos/etcd/pkg/types"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/etcdserver"
+	"go.etcd.io/etcd/etcdserver/api"
+	"go.etcd.io/etcd/etcdserver/api/membership"
+	pb "go.etcd.io/etcd/etcdserver/etcdserverpb"
+	"go.etcd.io/etcd/pkg/types"
 
 	"github.com/coreos/go-semver/semver"
+	"go.uber.org/zap"
 )
 
 type fakeStats struct{}
@@ -36,13 +37,14 @@ func (s *fakeStats) LeaderStats() []byte { return nil }
 func (s *fakeStats) StoreStats() []byte  { return nil }
 
 type v2v3Server struct {
+	lg    *zap.Logger
 	c     *clientv3.Client
 	store *v2v3Store
 	fakeStats
 }
 
-func NewServer(c *clientv3.Client, pfx string) etcdserver.ServerPeer {
-	return &v2v3Server{c: c, store: newStore(c, pfx)}
+func NewServer(lg *zap.Logger, c *clientv3.Client, pfx string) etcdserver.ServerPeer {
+	return &v2v3Server{lg: lg, c: c, store: newStore(c, pfx)}
 }
 
 func (s *v2v3Server) ClientCertAuthEnabled() bool { return false }
@@ -61,6 +63,7 @@ func (s *v2v3Server) Leader() types.ID {
 }
 
 func (s *v2v3Server) AddMember(ctx context.Context, memb membership.Member) ([]*membership.Member, error) {
+	// adding member as learner is not supported by V2 Server.
 	resp, err := s.c.MemberAdd(ctx, memb.PeerURLs)
 	if err != nil {
 		return nil, err
@@ -70,6 +73,14 @@ func (s *v2v3Server) AddMember(ctx context.Context, memb membership.Member) ([]*
 
 func (s *v2v3Server) RemoveMember(ctx context.Context, id uint64) ([]*membership.Member, error) {
 	resp, err := s.c.MemberRemove(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return v3MembersToMembership(resp.Members), nil
+}
+
+func (s *v2v3Server) PromoteMember(ctx context.Context, id uint64) ([]*membership.Member, error) {
+	resp, err := s.c.MemberPromote(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +101,8 @@ func v3MembersToMembership(v3membs []*pb.Member) []*membership.Member {
 		membs[i] = &membership.Member{
 			ID: types.ID(m.ID),
 			RaftAttributes: membership.RaftAttributes{
-				PeerURLs: m.PeerURLs,
+				PeerURLs:  m.PeerURLs,
+				IsLearner: m.IsLearner,
 			},
 			Attributes: membership.Attributes{
 				Name:       m.Name,
@@ -106,7 +118,7 @@ func (s *v2v3Server) Cluster() api.Cluster            { return s }
 func (s *v2v3Server) Alarms() []*pb.AlarmMember       { return nil }
 
 func (s *v2v3Server) Do(ctx context.Context, r pb.Request) (etcdserver.Response, error) {
-	applier := etcdserver.NewApplierV2(s.store, nil)
+	applier := etcdserver.NewApplierV2(s.lg, s.store, nil)
 	reqHandler := etcdserver.NewStoreRequestV2Handler(s.store, applier)
 	req := (*etcdserver.RequestV2)(&r)
 	resp, err := req.Handle(ctx, reqHandler)

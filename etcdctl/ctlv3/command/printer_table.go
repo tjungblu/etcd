@@ -17,9 +17,10 @@ package command
 import (
 	"os"
 
-	"github.com/olekukonko/tablewriter"
+	v3 "go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/clientv3/snapshot"
 
-	v3 "github.com/coreos/etcd/clientv3"
+	"github.com/olekukonko/tablewriter"
 )
 
 type tablePrinter struct{ printer }
@@ -64,7 +65,7 @@ func (tp *tablePrinter) EndpointHashKV(r []epHashKV) {
 	table.SetAlignment(tablewriter.ALIGN_RIGHT)
 	table.Render()
 }
-func (tp *tablePrinter) DBStatus(r dbstatus) {
+func (tp *tablePrinter) DBStatus(r snapshot.Status) {
 	hdr, rows := makeDBStatusTable(r)
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader(hdr)

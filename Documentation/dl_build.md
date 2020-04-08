@@ -1,6 +1,5 @@
 ---
 title: Download and build
-weight: 1
 ---
 
 ## System requirements

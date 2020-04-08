@@ -18,17 +18,21 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/etcd/lease"
-	"github.com/coreos/etcd/mvcc/backend"
-	"github.com/coreos/etcd/mvcc/mvccpb"
-	"github.com/coreos/etcd/pkg/schedule"
+	"go.etcd.io/etcd/lease"
+	"go.etcd.io/etcd/mvcc/backend"
+	"go.etcd.io/etcd/mvcc/mvccpb"
+	"go.etcd.io/etcd/pkg/schedule"
+	"go.etcd.io/etcd/pkg/traceutil"
+
 	"github.com/coreos/pkg/capnslog"
+	"go.uber.org/zap"
 )
 
 var (
@@ -44,7 +48,7 @@ var (
 	ErrCanceled  = errors.New("mvcc: watcher is canceled")
 	ErrClosed    = errors.New("mvcc: closed")
 
-	plog = capnslog.NewPackageLogger("github.com/coreos/etcd", "mvcc")
+	plog = capnslog.NewPackageLogger("go.etcd.io/etcd", "mvcc")
 )
 
 const (
@@ -57,12 +61,17 @@ const (
 )
 
 var restoreChunkKeys = 10000 // non-const for testing
+var defaultCompactBatchLimit = 1000
 
 // ConsistentIndexGetter is an interface that wraps the Get method.
 // Consistent index is the offset of an entry in a consistent replicated log.
 type ConsistentIndexGetter interface {
 	// ConsistentIndex returns the consistent index of current executing entry.
 	ConsistentIndex() uint64
+}
+
+type StoreConfig struct {
+	CompactionBatchLimit int
 }
 
 type store struct {
@@ -72,6 +81,8 @@ type store struct {
 	// consistentIndex caches the "consistent_index" key's value. Accessed
 	// through atomics so must be 64-bit aligned.
 	consistentIndex uint64
+
+	cfg StoreConfig
 
 	// mu read locks for txns and write locks for non-txn store changes.
 	mu sync.RWMutex
@@ -99,15 +110,21 @@ type store struct {
 	fifoSched schedule.Scheduler
 
 	stopc chan struct{}
+
+	lg *zap.Logger
 }
 
 // NewStore returns a new store. It is useful to create a store inside
 // mvcc pkg. It should only be used for testing externally.
-func NewStore(b backend.Backend, le lease.Lessor, ig ConsistentIndexGetter) *store {
+func NewStore(lg *zap.Logger, b backend.Backend, le lease.Lessor, ig ConsistentIndexGetter, cfg StoreConfig) *store {
+	if cfg.CompactionBatchLimit == 0 {
+		cfg.CompactionBatchLimit = defaultCompactBatchLimit
+	}
 	s := &store{
+		cfg:     cfg,
 		b:       b,
 		ig:      ig,
-		kvindex: newTreeIndex(),
+		kvindex: newTreeIndex(lg),
 
 		le: le,
 
@@ -118,11 +135,13 @@ func NewStore(b backend.Backend, le lease.Lessor, ig ConsistentIndexGetter) *sto
 		fifoSched: schedule.NewFIFOScheduler(),
 
 		stopc: make(chan struct{}),
+
+		lg: lg,
 	}
 	s.ReadView = &readView{s}
 	s.WriteView = &writeView{s}
 	if s.le != nil {
-		s.le.SetRangeDeleter(func() lease.TxnDelete { return s.Write() })
+		s.le.SetRangeDeleter(func() lease.TxnDelete { return s.Write(traceutil.TODO()) })
 	}
 
 	tx := s.b.BatchTx()
@@ -132,6 +151,8 @@ func NewStore(b backend.Backend, le lease.Lessor, ig ConsistentIndexGetter) *sto
 	tx.Unlock()
 	s.b.ForceCommit()
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.restore(); err != nil {
 		// TODO: return the error instead of panic here?
 		panic("failed to recover store from backend")
@@ -161,7 +182,7 @@ func (s *store) Hash() (hash uint32, revision int64, err error) {
 	s.b.ForceCommit()
 	h, err := s.b.Hash(DefaultIgnores)
 
-	hashDurations.Observe(time.Since(start).Seconds())
+	hashSec.Observe(time.Since(start).Seconds())
 	return h, s.currentRev, err
 }
 
@@ -187,8 +208,8 @@ func (s *store) HashByRev(rev int64) (hash uint32, currentRev int64, compactRev 
 	keep := s.kvindex.Keep(rev)
 
 	tx := s.b.ReadTx()
-	tx.Lock()
-	defer tx.Unlock()
+	tx.RLock()
+	defer tx.RUnlock()
 	s.mu.RUnlock()
 
 	upper := revision{main: rev + 1}
@@ -214,27 +235,23 @@ func (s *store) HashByRev(rev int64) (hash uint32, currentRev int64, compactRev 
 	})
 	hash = h.Sum32()
 
-	hashRevDurations.Observe(time.Since(start).Seconds())
+	hashRevSec.Observe(time.Since(start).Seconds())
 	return hash, currentRev, compactRev, err
 }
 
-func (s *store) Compact(rev int64) (<-chan struct{}, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *store) updateCompactRev(rev int64) (<-chan struct{}, error) {
 	s.revMu.Lock()
-	defer s.revMu.Unlock()
-
 	if rev <= s.compactMainRev {
 		ch := make(chan struct{})
 		f := func(ctx context.Context) { s.compactBarrier(ctx, ch) }
 		s.fifoSched.Schedule(f)
+		s.revMu.Unlock()
 		return ch, ErrCompacted
 	}
 	if rev > s.currentRev {
+		s.revMu.Unlock()
 		return nil, ErrFutureRev
 	}
-
-	start := time.Now()
 
 	s.compactMainRev = rev
 
@@ -248,13 +265,21 @@ func (s *store) Compact(rev int64) (<-chan struct{}, error) {
 	// ensure that desired compaction is persisted
 	s.b.ForceCommit()
 
-	keep := s.kvindex.Compact(rev)
+	s.revMu.Unlock()
+
+	return nil, nil
+}
+
+func (s *store) compact(trace *traceutil.Trace, rev int64) (<-chan struct{}, error) {
 	ch := make(chan struct{})
 	var j = func(ctx context.Context) {
 		if ctx.Err() != nil {
 			s.compactBarrier(ctx, ch)
 			return
 		}
+		start := time.Now()
+		keep := s.kvindex.Compact(rev)
+		indexCompactionPauseMs.Observe(float64(time.Since(start) / time.Millisecond))
 		if !s.scheduleCompaction(rev, keep) {
 			s.compactBarrier(nil, ch)
 			return
@@ -263,9 +288,31 @@ func (s *store) Compact(rev int64) (<-chan struct{}, error) {
 	}
 
 	s.fifoSched.Schedule(j)
-
-	indexCompactionPauseDurations.Observe(float64(time.Since(start) / time.Millisecond))
+	trace.Step("schedule compaction")
 	return ch, nil
+}
+
+func (s *store) compactLockfree(rev int64) (<-chan struct{}, error) {
+	ch, err := s.updateCompactRev(rev)
+	if nil != err {
+		return ch, err
+	}
+
+	return s.compact(traceutil.TODO(), rev)
+}
+
+func (s *store) Compact(trace *traceutil.Trace, rev int64) (<-chan struct{}, error) {
+	s.mu.Lock()
+
+	ch, err := s.updateCompactRev(rev)
+	trace.Step("check and update compact revision")
+	if err != nil {
+		s.mu.Unlock()
+		return ch, err
+	}
+	s.mu.Unlock()
+
+	return s.compact(trace, rev)
 }
 
 // DefaultIgnores is a map of keys to ignore in hash checking.
@@ -299,7 +346,7 @@ func (s *store) Restore(b backend.Backend) error {
 
 	atomic.StoreUint64(&s.consistentIndex, 0)
 	s.b = b
-	s.kvindex = newTreeIndex()
+	s.kvindex = newTreeIndex(s.lg)
 	s.currentRev = 1
 	s.compactMainRev = -1
 	s.fifoSched = schedule.NewFIFOScheduler()
@@ -324,7 +371,17 @@ func (s *store) restore() error {
 	_, finishedCompactBytes := tx.UnsafeRange(metaBucketName, finishedCompactKeyName, nil, 0)
 	if len(finishedCompactBytes) != 0 {
 		s.compactMainRev = bytesToRev(finishedCompactBytes[0]).main
-		plog.Printf("restore compact to %d", s.compactMainRev)
+
+		if s.lg != nil {
+			s.lg.Info(
+				"restored last compact revision",
+				zap.String("meta-bucket-name", string(metaBucketName)),
+				zap.String("meta-bucket-name-key", string(finishedCompactKeyName)),
+				zap.Int64("restored-compact-revision", s.compactMainRev),
+			)
+		} else {
+			plog.Printf("restore compact to %d", s.compactMainRev)
+		}
 	}
 	_, scheduledCompactBytes := tx.UnsafeRange(metaBucketName, scheduledCompactKeyName, nil, 0)
 	scheduledCompact := int64(0)
@@ -334,7 +391,7 @@ func (s *store) restore() error {
 
 	// index keys concurrently as they're loaded in from tx
 	keysGauge.Set(0)
-	rkvc, revc := restoreIntoIndex(s.kvindex)
+	rkvc, revc := restoreIntoIndex(s.lg, s.kvindex)
 	for {
 		keys, vals := tx.UnsafeRange(keyBucketName, min, max, int64(restoreChunkKeys))
 		if len(keys) == 0 {
@@ -342,7 +399,7 @@ func (s *store) restore() error {
 		}
 		// rkvc blocks if the total pending keys exceeds the restore
 		// chunk size to keep keys from consuming too much memory.
-		restoreChunk(rkvc, keys, vals, keyToLease)
+		restoreChunk(s.lg, rkvc, keys, vals, keyToLease)
 		if len(keys) < restoreChunkKeys {
 			// partial set implies final set
 			break
@@ -371,15 +428,33 @@ func (s *store) restore() error {
 		}
 		err := s.le.Attach(lid, []lease.LeaseItem{{Key: key}})
 		if err != nil {
-			plog.Errorf("unexpected Attach error: %v", err)
+			if s.lg != nil {
+				s.lg.Warn(
+					"failed to attach a lease",
+					zap.String("lease-id", fmt.Sprintf("%016x", lid)),
+					zap.Error(err),
+				)
+			} else {
+				plog.Errorf("unexpected Attach error: %v", err)
+			}
 		}
 	}
 
 	tx.Unlock()
 
 	if scheduledCompact != 0 {
-		s.Compact(scheduledCompact)
-		plog.Printf("resume scheduled compaction at %d", scheduledCompact)
+		s.compactLockfree(scheduledCompact)
+
+		if s.lg != nil {
+			s.lg.Info(
+				"resume scheduled compaction",
+				zap.String("meta-bucket-name", string(metaBucketName)),
+				zap.String("meta-bucket-name-key", string(scheduledCompactKeyName)),
+				zap.Int64("scheduled-compact-revision", scheduledCompact),
+			)
+		} else {
+			plog.Printf("resume scheduled compaction at %d", scheduledCompact)
+		}
 	}
 
 	return nil
@@ -391,7 +466,7 @@ type revKeyValue struct {
 	kstr string
 }
 
-func restoreIntoIndex(idx index) (chan<- revKeyValue, <-chan int64) {
+func restoreIntoIndex(lg *zap.Logger, idx index) (chan<- revKeyValue, <-chan int64) {
 	rkvc, revc := make(chan revKeyValue, restoreChunkKeys), make(chan int64, 1)
 	go func() {
 		currentRev := int64(1)
@@ -422,12 +497,12 @@ func restoreIntoIndex(idx index) (chan<- revKeyValue, <-chan int64) {
 			currentRev = rev.main
 			if ok {
 				if isTombstone(rkv.key) {
-					ki.tombstone(rev.main, rev.sub)
+					ki.tombstone(lg, rev.main, rev.sub)
 					continue
 				}
-				ki.put(rev.main, rev.sub)
+				ki.put(lg, rev.main, rev.sub)
 			} else if !isTombstone(rkv.key) {
-				ki.restore(revision{rkv.kv.CreateRevision, 0}, rev, rkv.kv.Version)
+				ki.restore(lg, revision{rkv.kv.CreateRevision, 0}, rev, rkv.kv.Version)
 				idx.Insert(ki)
 				kiCache[rkv.kstr] = ki
 			}
@@ -436,11 +511,15 @@ func restoreIntoIndex(idx index) (chan<- revKeyValue, <-chan int64) {
 	return rkvc, revc
 }
 
-func restoreChunk(kvc chan<- revKeyValue, keys, vals [][]byte, keyToLease map[string]lease.LeaseID) {
+func restoreChunk(lg *zap.Logger, kvc chan<- revKeyValue, keys, vals [][]byte, keyToLease map[string]lease.LeaseID) {
 	for i, key := range keys {
 		rkv := revKeyValue{key: key}
 		if err := rkv.kv.Unmarshal(vals[i]); err != nil {
-			plog.Fatalf("cannot unmarshal event: %v", err)
+			if lg != nil {
+				lg.Fatal("failed to unmarshal mvccpb.KeyValue", zap.Error(err))
+			} else {
+				plog.Fatalf("cannot unmarshal event: %v", err)
+			}
 		}
 		rkv.kstr = string(rkv.kv.Key)
 		if isTombstone(key) {
@@ -494,9 +573,15 @@ func (s *store) setupMetricsReporter() {
 	reportDbTotalSizeInBytesMu.Lock()
 	reportDbTotalSizeInBytes = func() float64 { return float64(b.Size()) }
 	reportDbTotalSizeInBytesMu.Unlock()
+	reportDbTotalSizeInBytesDebugMu.Lock()
+	reportDbTotalSizeInBytesDebug = func() float64 { return float64(b.Size()) }
+	reportDbTotalSizeInBytesDebugMu.Unlock()
 	reportDbTotalSizeInUseInBytesMu.Lock()
 	reportDbTotalSizeInUseInBytes = func() float64 { return float64(b.SizeInUse()) }
 	reportDbTotalSizeInUseInBytesMu.Unlock()
+	reportDbOpenReadTxNMu.Lock()
+	reportDbOpenReadTxN = func() float64 { return float64(b.OpenReadTxN()) }
+	reportDbOpenReadTxNMu.Unlock()
 	reportCurrentRevMu.Lock()
 	reportCurrentRev = func() float64 {
 		s.revMu.RLock()
@@ -514,9 +599,17 @@ func (s *store) setupMetricsReporter() {
 }
 
 // appendMarkTombstone appends tombstone mark to normal revision bytes.
-func appendMarkTombstone(b []byte) []byte {
+func appendMarkTombstone(lg *zap.Logger, b []byte) []byte {
 	if len(b) != revBytesLen {
-		plog.Panicf("cannot append mark to non normal revision bytes")
+		if lg != nil {
+			lg.Panic(
+				"cannot append tombstone mark to non-normal revision bytes",
+				zap.Int("expected-revision-bytes-size", revBytesLen),
+				zap.Int("given-revision-bytes-size", len(b)),
+			)
+		} else {
+			plog.Panicf("cannot append mark to non normal revision bytes")
+		}
 	}
 	return append(b, markTombstone)
 }

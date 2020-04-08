@@ -1,4 +1,4 @@
-// Copyright 2015 The etcd Authors
+// Copyright 2018 The etcd Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,71 +15,38 @@
 package flags
 
 import (
-	"errors"
 	"flag"
 	"sort"
 	"strings"
 )
 
-// NewStringsFlag creates a new string flag for which any one of the given
-// strings is a valid value, and any other value is an error.
-//
-// valids[0] will be default value. Caller must be sure len(valids)!=0 or
-// it will panic.
-func NewStringsFlag(valids ...string) *StringsFlag {
-	return &StringsFlag{Values: valids, val: valids[0]}
-}
-
-// StringsFlag implements the flag.Value interface.
-type StringsFlag struct {
-	Values []string
-	val    string
-}
-
-// Set verifies the argument to be a valid member of the allowed values
-// before setting the underlying flag value.
-func (ss *StringsFlag) Set(s string) error {
-	for _, v := range ss.Values {
-		if s == v {
-			ss.val = s
-			return nil
-		}
-	}
-	return errors.New("invalid value")
-}
-
-// String returns the set value (if any) of the StringsFlag
-func (ss *StringsFlag) String() string {
-	return ss.val
-}
-
-// StringsValueV2 wraps "sort.StringSlice".
-type StringsValueV2 sort.StringSlice
+// StringsValue wraps "sort.StringSlice".
+type StringsValue sort.StringSlice
 
 // Set parses a command line set of strings, separated by comma.
 // Implements "flag.Value" interface.
-func (ss *StringsValueV2) Set(s string) error {
+func (ss *StringsValue) Set(s string) error {
 	*ss = strings.Split(s, ",")
 	return nil
 }
 
 // String implements "flag.Value" interface.
-func (ss *StringsValueV2) String() string { return strings.Join(*ss, ",") }
+func (ss *StringsValue) String() string { return strings.Join(*ss, ",") }
 
-// NewStringsValueV2 implements string slice as "flag.Value" interface.
+// NewStringsValue implements string slice as "flag.Value" interface.
 // Given value is to be separated by comma.
-func NewStringsValueV2(s string) (ss *StringsValueV2) {
+func NewStringsValue(s string) (ss *StringsValue) {
 	if s == "" {
-		return &StringsValueV2{}
+		return &StringsValue{}
 	}
-	ss = new(StringsValueV2)
+	ss = new(StringsValue)
 	if err := ss.Set(s); err != nil {
-		plog.Panicf("new StringsValueV2 should never fail: %v", err)
+		plog.Panicf("new StringsValue should never fail: %v", err)
 	}
 	return ss
 }
 
-// StringsFromFlagV2 returns a string slice from the flag.
-func StringsFromFlagV2(fs *flag.FlagSet, flagName string) []string {
-	return []string(*fs.Lookup(flagName).Value.(*StringsValueV2))
+// StringsFromFlag returns a string slice from the flag.
+func StringsFromFlag(fs *flag.FlagSet, flagName string) []string {
+	return []string(*fs.Lookup(flagName).Value.(*StringsValue))
 }

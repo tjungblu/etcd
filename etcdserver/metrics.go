@@ -18,9 +18,11 @@ import (
 	goruntime "runtime"
 	"time"
 
-	"github.com/coreos/etcd/pkg/runtime"
-	"github.com/coreos/etcd/version"
+	"go.etcd.io/etcd/pkg/runtime"
+	"go.etcd.io/etcd/version"
+
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -41,6 +43,26 @@ var (
 		Subsystem: "server",
 		Name:      "leader_changes_seen_total",
 		Help:      "The number of leader changes seen.",
+	})
+	isLearner = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "etcd",
+		Subsystem: "server",
+		Name:      "is_learner",
+		Help:      "Whether or not this member is a learner. 1 if is, 0 otherwise.",
+	})
+	learnerPromoteFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "etcd",
+		Subsystem: "server",
+		Name:      "learner_promote_failures",
+		Help:      "The total number of failed learner promotions (likely learner not ready) while this member is leader.",
+	},
+		[]string{"Reason"},
+	)
+	learnerPromoteSucceed = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "etcd",
+		Subsystem: "server",
+		Name:      "learner_promote_successes",
+		Help:      "The total number of successful learner promotions while this member is leader.",
 	})
 	heartbeatSendFailures = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "etcd",
@@ -84,12 +106,6 @@ var (
 		Name:      "proposals_failed_total",
 		Help:      "The total number of failed proposals seen.",
 	})
-	leaseExpired = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "etcd_debugging",
-		Subsystem: "server",
-		Name:      "lease_expired_total",
-		Help:      "The total number of expired leases.",
-	})
 	slowReadIndex = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "etcd",
 		Subsystem: "server",
@@ -101,6 +117,12 @@ var (
 		Subsystem: "server",
 		Name:      "read_indexes_failed_total",
 		Help:      "The total number of failed read indexes seen.",
+	})
+	leaseExpired = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "etcd_debugging",
+		Subsystem: "server",
+		Name:      "lease_expired_total",
+		Help:      "The total number of expired leases.",
 	})
 	quotaBackendBytes = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "etcd",
@@ -142,13 +164,16 @@ func init() {
 	prometheus.MustRegister(proposalsApplied)
 	prometheus.MustRegister(proposalsPending)
 	prometheus.MustRegister(proposalsFailed)
-	prometheus.MustRegister(leaseExpired)
 	prometheus.MustRegister(slowReadIndex)
 	prometheus.MustRegister(readIndexFailed)
+	prometheus.MustRegister(leaseExpired)
 	prometheus.MustRegister(quotaBackendBytes)
 	prometheus.MustRegister(currentVersion)
 	prometheus.MustRegister(currentGoVersion)
 	prometheus.MustRegister(serverID)
+	prometheus.MustRegister(isLearner)
+	prometheus.MustRegister(learnerPromoteSucceed)
+	prometheus.MustRegister(learnerPromoteFailed)
 
 	currentVersion.With(prometheus.Labels{
 		"server_version": version.Version,
@@ -158,22 +183,34 @@ func init() {
 	}).Set(1)
 }
 
-func monitorFileDescriptor(done <-chan struct{}) {
+func monitorFileDescriptor(lg *zap.Logger, done <-chan struct{}) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
 		used, err := runtime.FDUsage()
 		if err != nil {
-			plog.Errorf("cannot monitor file descriptor usage (%v)", err)
+			if lg != nil {
+				lg.Warn("failed to get file descriptor usage", zap.Error(err))
+			} else {
+				plog.Errorf("cannot monitor file descriptor usage (%v)", err)
+			}
 			return
 		}
 		limit, err := runtime.FDLimit()
 		if err != nil {
-			plog.Errorf("cannot monitor file descriptor usage (%v)", err)
+			if lg != nil {
+				lg.Warn("failed to get file descriptor limit", zap.Error(err))
+			} else {
+				plog.Errorf("cannot monitor file descriptor usage (%v)", err)
+			}
 			return
 		}
 		if used >= limit/5*4 {
-			plog.Warningf("80%% of the file descriptor limit is used [used = %d, limit = %d]", used, limit)
+			if lg != nil {
+				lg.Warn("80% of file descriptors are used", zap.Uint64("used", used), zap.Uint64("limit", limit))
+			} else {
+				plog.Warningf("80%% of the file descriptor limit is used [used = %d, limit = %d]", used, limit)
+			}
 		}
 		select {
 		case <-ticker.C:

@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"net"
 	"net/http"
@@ -28,7 +29,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/pkg/transport"
+	"go.etcd.io/etcd/pkg/transport"
 
 	"go.uber.org/zap"
 )
@@ -269,6 +270,77 @@ func TestServer_PauseTx(t *testing.T) {
 	}
 }
 
+func TestServer_ModifyTx_corrupt(t *testing.T) {
+	scheme := "unix"
+	srcAddr, dstAddr := newUnixAddr(), newUnixAddr()
+	defer func() {
+		os.RemoveAll(srcAddr)
+		os.RemoveAll(dstAddr)
+	}()
+	ln := listen(t, scheme, dstAddr, transport.TLSInfo{})
+	defer ln.Close()
+
+	p := NewServer(ServerConfig{
+		Logger: testLogger,
+		From:   url.URL{Scheme: scheme, Host: srcAddr},
+		To:     url.URL{Scheme: scheme, Host: dstAddr},
+	})
+	<-p.Ready()
+	defer p.Close()
+
+	p.ModifyTx(func(d []byte) []byte {
+		d[len(d)/2]++
+		return d
+	})
+	data := []byte("Hello World!")
+	send(t, data, scheme, srcAddr, transport.TLSInfo{})
+	if d := receive(t, ln); bytes.Equal(d, data) {
+		t.Fatalf("expected corrupted data, got %q", string(d))
+	}
+
+	p.UnmodifyTx()
+	send(t, data, scheme, srcAddr, transport.TLSInfo{})
+	if d := receive(t, ln); !bytes.Equal(d, data) {
+		t.Fatalf("expected uncorrupted data, got %q", string(d))
+	}
+}
+
+func TestServer_ModifyTx_packet_loss(t *testing.T) {
+	scheme := "unix"
+	srcAddr, dstAddr := newUnixAddr(), newUnixAddr()
+	defer func() {
+		os.RemoveAll(srcAddr)
+		os.RemoveAll(dstAddr)
+	}()
+	ln := listen(t, scheme, dstAddr, transport.TLSInfo{})
+	defer ln.Close()
+
+	p := NewServer(ServerConfig{
+		Logger: testLogger,
+		From:   url.URL{Scheme: scheme, Host: srcAddr},
+		To:     url.URL{Scheme: scheme, Host: dstAddr},
+	})
+	<-p.Ready()
+	defer p.Close()
+
+	// 50% packet loss
+	p.ModifyTx(func(d []byte) []byte {
+		half := len(d) / 2
+		return d[:half:half]
+	})
+	data := []byte("Hello World!")
+	send(t, data, scheme, srcAddr, transport.TLSInfo{})
+	if d := receive(t, ln); bytes.Equal(d, data) {
+		t.Fatalf("expected corrupted data, got %q", string(d))
+	}
+
+	p.UnmodifyTx()
+	send(t, data, scheme, srcAddr, transport.TLSInfo{})
+	if d := receive(t, ln); !bytes.Equal(d, data) {
+		t.Fatalf("expected uncorrupted data, got %q", string(d))
+	}
+}
+
 func TestServer_BlackholeTx(t *testing.T) {
 	scheme := "unix"
 	srcAddr, dstAddr := newUnixAddr(), newUnixAddr()
@@ -319,41 +391,6 @@ func TestServer_BlackholeTx(t *testing.T) {
 	}
 }
 
-func TestServer_CorruptTx(t *testing.T) {
-	scheme := "unix"
-	srcAddr, dstAddr := newUnixAddr(), newUnixAddr()
-	defer func() {
-		os.RemoveAll(srcAddr)
-		os.RemoveAll(dstAddr)
-	}()
-	ln := listen(t, scheme, dstAddr, transport.TLSInfo{})
-	defer ln.Close()
-
-	p := NewServer(ServerConfig{
-		Logger: testLogger,
-		From:   url.URL{Scheme: scheme, Host: srcAddr},
-		To:     url.URL{Scheme: scheme, Host: dstAddr},
-	})
-	<-p.Ready()
-	defer p.Close()
-
-	p.CorruptTx(func(d []byte) []byte {
-		d[len(d)/2]++
-		return d
-	})
-	data := []byte("Hello World!")
-	send(t, data, scheme, srcAddr, transport.TLSInfo{})
-	if d := receive(t, ln); bytes.Equal(d, data) {
-		t.Fatalf("expected corrupted data, got %q", string(d))
-	}
-
-	p.UncorruptTx()
-	send(t, data, scheme, srcAddr, transport.TLSInfo{})
-	if d := receive(t, ln); !bytes.Equal(d, data) {
-		t.Fatalf("expected uncorrupted data, got %q", string(d))
-	}
-}
-
 func TestServer_Shutdown(t *testing.T) {
 	scheme := "unix"
 	srcAddr, dstAddr := newUnixAddr(), newUnixAddr()
@@ -372,8 +409,8 @@ func TestServer_Shutdown(t *testing.T) {
 	<-p.Ready()
 	defer p.Close()
 
-	px, _ := p.(*proxyServer)
-	px.listener.Close()
+	s, _ := p.(*server)
+	s.listener.Close()
 	time.Sleep(200 * time.Millisecond)
 
 	data := []byte("Hello World!")
@@ -449,6 +486,7 @@ func testServerHTTP(t *testing.T, secure, delayTx bool) {
 		Addr:      dstAddr,
 		Handler:   mux,
 		TLSConfig: tlsConfig,
+		ErrorLog:  log.New(ioutil.Discard, "net/http", 0),
 	}
 
 	donec := make(chan struct{})

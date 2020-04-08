@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
+	"go.etcd.io/etcd/clientv3"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/time/rate"
@@ -47,7 +47,7 @@ type roundClient struct {
 func newClient(eps []string, timeout time.Duration) *clientv3.Client {
 	c, err := clientv3.New(clientv3.Config{
 		Endpoints:   eps,
-		DialTimeout: time.Duration(timeout) * time.Second,
+		DialTimeout: timeout * time.Second,
 	})
 	if err != nil {
 		log.Fatal(err)

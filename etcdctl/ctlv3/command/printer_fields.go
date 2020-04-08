@@ -17,9 +17,10 @@ package command
 import (
 	"fmt"
 
-	v3 "github.com/coreos/etcd/clientv3"
-	pb "github.com/coreos/etcd/etcdserver/etcdserverpb"
-	spb "github.com/coreos/etcd/mvcc/mvccpb"
+	v3 "go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/clientv3/snapshot"
+	pb "go.etcd.io/etcd/etcdserver/etcdserverpb"
+	spb "go.etcd.io/etcd/mvcc/mvccpb"
 )
 
 type fieldsPrinter struct{ printer }
@@ -136,6 +137,7 @@ func (p *fieldsPrinter) MemberList(r v3.MemberListResponse) {
 		for _, u := range m.ClientURLs {
 			fmt.Printf("\"ClientURL\" : %q\n", u)
 		}
+		fmt.Println(`"IsLearner" :`, m.IsLearner)
 		fmt.Println()
 	}
 }
@@ -156,8 +158,11 @@ func (p *fieldsPrinter) EndpointStatus(eps []epStatus) {
 		fmt.Printf("\"Version\" : %q\n", ep.Resp.Version)
 		fmt.Println(`"DBSize" :`, ep.Resp.DbSize)
 		fmt.Println(`"Leader" :`, ep.Resp.Leader)
+		fmt.Println(`"IsLearner" :`, ep.Resp.IsLearner)
 		fmt.Println(`"RaftIndex" :`, ep.Resp.RaftIndex)
 		fmt.Println(`"RaftTerm" :`, ep.Resp.RaftTerm)
+		fmt.Println(`"RaftAppliedIndex" :`, ep.Resp.RaftAppliedIndex)
+		fmt.Println(`"Errors" :`, ep.Resp.Errors)
 		fmt.Printf("\"Endpoint\" : %q\n", ep.Ep)
 		fmt.Println()
 	}
@@ -181,7 +186,7 @@ func (p *fieldsPrinter) Alarm(r v3.AlarmResponse) {
 	}
 }
 
-func (p *fieldsPrinter) DBStatus(r dbstatus) {
+func (p *fieldsPrinter) DBStatus(r snapshot.Status) {
 	fmt.Println(`"Hash" :`, r.Hash)
 	fmt.Println(`"Revision" :`, r.Revision)
 	fmt.Println(`"Keys" :`, r.TotalKey)

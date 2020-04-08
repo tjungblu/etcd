@@ -51,14 +51,18 @@ var etcdFields = []string{
 	"SnapshotCount",
 	"QuotaBackendBytes",
 
-	// "PreVote",
-	// "InitialCorruptCheck",
+	"PreVote",
+	"InitialCorruptCheck",
+
+	"Logger",
+	"LogOutputs",
+	"LogLevel",
 }
 
 // Flags returns etcd flags in string slice.
-func (cfg *Etcd) Flags() (fs []string) {
-	tp := reflect.TypeOf(*cfg)
-	vo := reflect.ValueOf(*cfg)
+func (e *Etcd) Flags() (fs []string) {
+	tp := reflect.TypeOf(*e)
+	vo := reflect.ValueOf(*e)
 	for _, name := range etcdFields {
 		field, ok := tp.FieldByName(name)
 		if !ok {
@@ -86,9 +90,9 @@ func (cfg *Etcd) Flags() (fs []string) {
 
 		fname := field.Tag.Get("yaml")
 
-		// not supported in old etcd
-		if fname == "pre-vote" || fname == "initial-corrupt-check" {
-			continue
+		// TODO: remove this
+		if fname == "initial-corrupt-check" {
+			fname = "experimental-" + fname
 		}
 
 		if sv != "" {
