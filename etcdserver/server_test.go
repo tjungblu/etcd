@@ -984,20 +984,24 @@ func TestSnapshot(t *testing.T) {
 		r:       *r,
 		v2store: st,
 	}
-	srv.kv = mvcc.New(zap.NewExample(), be, &lease.FakeLessor{}, &srv.consistIndex, mvcc.StoreConfig{})
+	srv.kv = mvcc.New(zap.NewExample(), be, &lease.FakeLessor{}, nil, &srv.consistIndex, mvcc.StoreConfig{})
 	srv.be = be
 
 	ch := make(chan struct{}, 2)
 
 	go func() {
-		gaction, _ := p.Wait(1)
+		gaction, _ := p.Wait(2)
 		defer func() { ch <- struct{}{} }()
 
-		if len(gaction) != 1 {
-			t.Errorf("len(action) = %d, want 1", len(gaction))
+		if len(gaction) != 2 {
+			t.Fatalf("len(action) = %d, want 2", len(gaction))
 		}
 		if !reflect.DeepEqual(gaction[0], testutil.Action{Name: "SaveSnap"}) {
 			t.Errorf("action = %s, want SaveSnap", gaction[0])
+		}
+
+		if !reflect.DeepEqual(gaction[1], testutil.Action{Name: "Release"}) {
+			t.Errorf("action = %s, want Release", gaction[1])
 		}
 	}()
 
@@ -1065,7 +1069,7 @@ func TestSnapshotOrdering(t *testing.T) {
 
 	be, tmpPath := backend.NewDefaultTmpBackend()
 	defer os.RemoveAll(tmpPath)
-	s.kv = mvcc.New(zap.NewExample(), be, &lease.FakeLessor{}, &s.consistIndex, mvcc.StoreConfig{})
+	s.kv = mvcc.New(zap.NewExample(), be, &lease.FakeLessor{}, nil, &s.consistIndex, mvcc.StoreConfig{})
 	s.be = be
 
 	s.start()
@@ -1081,20 +1085,32 @@ func TestSnapshotOrdering(t *testing.T) {
 		n.readyc <- raft.Ready{Snapshot: snapMsg.Snapshot}
 	}()
 
+	ac := <-p.Chan()
+	if ac.Name != "Save" {
+		t.Fatalf("expected Save, got %+v", ac)
+	}
+
+	if ac := <-p.Chan(); ac.Name != "SaveSnap" {
+		t.Fatalf("expected SaveSnap, got %+v", ac)
+	}
+
 	if ac := <-p.Chan(); ac.Name != "Save" {
 		t.Fatalf("expected Save, got %+v", ac)
 	}
-	if ac := <-p.Chan(); ac.Name != "Save" {
-		t.Fatalf("expected Save, got %+v", ac)
-	}
+
 	// confirm snapshot file still present before calling SaveSnap
 	snapPath := filepath.Join(snapdir, fmt.Sprintf("%016x.snap.db", 1))
 	if !fileutil.Exist(snapPath) {
 		t.Fatalf("expected file %q, got missing", snapPath)
 	}
+
 	// unblock SaveSnapshot, etcdserver now permitted to move snapshot file
-	if ac := <-p.Chan(); ac.Name != "SaveSnap" {
-		t.Fatalf("expected SaveSnap, got %+v", ac)
+	if ac := <-p.Chan(); ac.Name != "Sync" {
+		t.Fatalf("expected Sync, got %+v", ac)
+	}
+
+	if ac := <-p.Chan(); ac.Name != "Release" {
+		t.Fatalf("expected Release, got %+v", ac)
 	}
 }
 
@@ -1126,23 +1142,29 @@ func TestTriggerSnap(t *testing.T) {
 	}
 	srv.applyV2 = &applierV2store{store: srv.v2store, cluster: srv.cluster}
 
-	srv.kv = mvcc.New(zap.NewExample(), be, &lease.FakeLessor{}, &srv.consistIndex, mvcc.StoreConfig{})
+	srv.kv = mvcc.New(zap.NewExample(), be, &lease.FakeLessor{}, nil, &srv.consistIndex, mvcc.StoreConfig{})
 	srv.be = be
 
 	srv.start()
 
 	donec := make(chan struct{})
 	go func() {
-		wcnt := 2 + snapc
+		wcnt := 3 + snapc
 		gaction, _ := p.Wait(wcnt)
 
 		// each operation is recorded as a Save
-		// (SnapshotCount+1) * Puts + SaveSnap = (SnapshotCount+1) * Save + SaveSnap
+		// (SnapshotCount+1) * Puts + SaveSnap = (SnapshotCount+1) * Save + SaveSnap + Release
 		if len(gaction) != wcnt {
-			t.Errorf("len(action) = %d, want %d", len(gaction), wcnt)
+			t.Logf("gaction: %v", gaction)
+			t.Fatalf("len(action) = %d, want %d", len(gaction), wcnt)
 		}
-		if !reflect.DeepEqual(gaction[wcnt-1], testutil.Action{Name: "SaveSnap"}) {
-			t.Errorf("action = %s, want SaveSnap", gaction[wcnt-1])
+
+		if !reflect.DeepEqual(gaction[wcnt-2], testutil.Action{Name: "SaveSnap"}) {
+			t.Errorf("action = %s, want SaveSnap", gaction[wcnt-2])
+		}
+
+		if !reflect.DeepEqual(gaction[wcnt-1], testutil.Action{Name: "Release"}) {
+			t.Errorf("action = %s, want Release", gaction[wcnt-1])
 		}
 		close(donec)
 	}()
@@ -1198,7 +1220,7 @@ func TestConcurrentApplyAndSnapshotV3(t *testing.T) {
 	defer func() {
 		os.RemoveAll(tmpPath)
 	}()
-	s.kv = mvcc.New(zap.NewExample(), be, &lease.FakeLessor{}, &s.consistIndex, mvcc.StoreConfig{})
+	s.kv = mvcc.New(zap.NewExample(), be, &lease.FakeLessor{}, nil, &s.consistIndex, mvcc.StoreConfig{})
 	s.be = be
 
 	s.start()
