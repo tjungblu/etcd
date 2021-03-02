@@ -645,6 +645,35 @@ func TestOpenForRead(t *testing.T) {
 	}
 }
 
+func TestOpenWithMaxIndex(t *testing.T) {
+	p, err := ioutil.TempDir(os.TempDir(), "waltest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(p)
+	// create WAL
+	w, err := Create(zap.NewExample(), p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	es := []raftpb.Entry{{Index: uint64(math.MaxInt64)}}
+	if err = w.Save(raftpb.HardState{}, es); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	w, err = Open(zap.NewExample(), p, walpb.Snapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err = w.ReadAll()
+	if err == nil || err != ErrSliceOutOfRange {
+		t.Fatalf("err = %v, want ErrSliceOutOfRange", err)
+	}
+}
+
 func TestSaveEmpty(t *testing.T) {
 	var buf bytes.Buffer
 	var est raftpb.HardState
@@ -1057,5 +1086,26 @@ func TestValidSnapshotEntriesAfterPurgeWal(t *testing.T) {
 	_, err = ValidSnapshotEntries(zap.NewExample(), p)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestReadAllFail ensure ReadAll error if used without opening the WAL
+func TestReadAllFail(t *testing.T) {
+	dir, err := ioutil.TempDir(os.TempDir(), "waltest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	// create initial WAL
+	f, err := Create(zap.NewExample(), dir, []byte("metadata"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	// try to read without opening the WAL
+	_, _, _, err = f.ReadAll()
+	if err == nil || err != ErrDecoderNotFound {
+		t.Fatalf("err = %v, want ErrDecoderNotFound", err)
 	}
 }

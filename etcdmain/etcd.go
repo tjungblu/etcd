@@ -358,7 +358,7 @@ func startProxy(cfg *config) error {
 	}
 
 	cfg.ec.Dir = filepath.Join(cfg.ec.Dir, "proxy")
-	err = os.MkdirAll(cfg.ec.Dir, fileutil.PrivateDirMode)
+	err = fileutil.TouchDirAll(cfg.ec.Dir)
 	if err != nil {
 		return err
 	}
