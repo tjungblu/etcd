@@ -50,5 +50,6 @@ require (
 	google.golang.org/grpc v1.26.0
 	gopkg.in/cheggaaa/pb.v1 v1.0.25
 	gopkg.in/yaml.v2 v2.2.2
+	honnef.co/go/tools v0.0.0-20190523083050-ea95bdfd59fc // indirect
 	sigs.k8s.io/yaml v1.1.0
 )
