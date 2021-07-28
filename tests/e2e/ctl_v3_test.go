@@ -21,16 +21,84 @@ import (
 	"testing"
 	"time"
 
-	"go.etcd.io/etcd/pkg/flags"
-	"go.etcd.io/etcd/pkg/testutil"
-	"go.etcd.io/etcd/version"
+	"github.com/stretchr/testify/assert"
+	"go.etcd.io/etcd/api/v3/version"
+	"go.etcd.io/etcd/client/pkg/v3/fileutil"
+	"go.etcd.io/etcd/client/pkg/v3/testutil"
+	"go.etcd.io/etcd/pkg/v3/flags"
 )
 
 func TestCtlV3Version(t *testing.T) { testCtl(t, versionTest) }
 
+func TestClusterVersion(t *testing.T) {
+	BeforeTest(t)
+
+	tests := []struct {
+		name         string
+		rollingStart bool
+	}{
+		{
+			name:         "When start servers at the same time",
+			rollingStart: false,
+		},
+		{
+			name:         "When start servers one by one",
+			rollingStart: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binary := binDir + "/etcd"
+			if !fileutil.Exist(binary) {
+				t.Skipf("%q does not exist", binary)
+			}
+			BeforeTest(t)
+			cfg := newConfigNoTLS()
+			cfg.execPath = binary
+			cfg.snapshotCount = 3
+			cfg.baseScheme = "unix" // to avoid port conflict
+			cfg.rollingStart = tt.rollingStart
+
+			epc, err := newEtcdProcessCluster(t, cfg)
+			if err != nil {
+				t.Fatalf("could not start etcd process cluster (%v)", err)
+			}
+			defer func() {
+				if errC := epc.Close(); errC != nil {
+					t.Fatalf("error closing etcd processes (%v)", errC)
+				}
+			}()
+
+			ctx := ctlCtx{
+				t:   t,
+				cfg: *cfg,
+				epc: epc,
+			}
+			cv := version.Cluster(version.Version)
+			clusterVersionTest(ctx, `"etcdcluster":"`+cv)
+		})
+	}
+}
+
 func versionTest(cx ctlCtx) {
 	if err := ctlV3Version(cx); err != nil {
 		cx.t.Fatalf("versionTest ctlV3Version error (%v)", err)
+	}
+}
+
+func clusterVersionTest(cx ctlCtx, expected string) {
+	var err error
+	for i := 0; i < 35; i++ {
+		if err = cURLGet(cx.epc, cURLReq{endpoint: "/version", expected: expected}); err != nil {
+			cx.t.Logf("#%d: v3 is not ready yet (%v)", i, err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		break
+	}
+	if err != nil {
+		cx.t.Fatalf("failed cluster version test expected %v got (%v)", expected, err)
 	}
 }
 
@@ -41,7 +109,7 @@ func ctlV3Version(cx ctlCtx) error {
 
 // TestCtlV3DialWithHTTPScheme ensures that client handles endpoints with HTTPS scheme.
 func TestCtlV3DialWithHTTPScheme(t *testing.T) {
-	testCtl(t, dialWithSchemeTest, withCfg(configClientTLS))
+	testCtl(t, dialWithSchemeTest, withCfg(*newConfigClientTLS()))
 }
 
 func dialWithSchemeTest(cx ctlCtx) {
@@ -75,6 +143,12 @@ type ctlCtx struct {
 
 	// for compaction
 	compactPhysical bool
+
+	// to run etcdutl instead of etcdctl for suitable commands.
+	etcdutl bool
+
+	// dir that was used during the test
+	dataDir string
 }
 
 type ctlOption func(*ctlCtx)
@@ -130,17 +204,24 @@ func withFlagByEnv() ctlOption {
 	return func(cx *ctlCtx) { cx.envMap = make(map[string]struct{}) }
 }
 
+func withEtcdutl() ctlOption {
+	return func(cx *ctlCtx) { cx.etcdutl = true }
+}
+
 func testCtl(t *testing.T, testFunc func(ctlCtx), opts ...ctlOption) {
-	defer testutil.AfterTest(t)
+	testCtlWithOffline(t, testFunc, nil, opts...)
+}
+
+func testCtlWithOffline(t *testing.T, testFunc func(ctlCtx), testOfflineFunc func(ctlCtx), opts ...ctlOption) {
+	BeforeTest(t)
 
 	ret := ctlCtx{
 		t:           t,
-		cfg:         configAutoTLS,
+		cfg:         *newConfigAutoTLS(),
 		dialTimeout: 7 * time.Second,
 	}
 	ret.applyOpts(opts)
 
-	mustEtcdctl(t)
 	if !ret.quorum {
 		ret.cfg = *configStandalone(ret.cfg)
 	}
@@ -151,12 +232,16 @@ func testCtl(t *testing.T, testFunc func(ctlCtx), opts ...ctlOption) {
 	if ret.initialCorruptCheck {
 		ret.cfg.initialCorruptCheck = ret.initialCorruptCheck
 	}
+	if testOfflineFunc != nil {
+		ret.cfg.keepDataDir = true
+	}
 
-	epc, err := newEtcdProcessCluster(&ret.cfg)
+	epc, err := newEtcdProcessCluster(t, &ret.cfg)
 	if err != nil {
 		t.Fatalf("could not start etcd process cluster (%v)", err)
 	}
 	ret.epc = epc
+	ret.dataDir = epc.procs[0].Config().dataDirPath
 
 	defer func() {
 		if ret.envMap != nil {
@@ -164,8 +249,10 @@ func testCtl(t *testing.T, testFunc func(ctlCtx), opts ...ctlOption) {
 				os.Unsetenv(k)
 			}
 		}
-		if errC := ret.epc.Close(); errC != nil {
-			t.Fatalf("error closing etcd processes (%v)", errC)
+		if ret.epc != nil {
+			if errC := ret.epc.Close(); errC != nil {
+				t.Fatalf("error closing etcd processes (%v)", errC)
+			}
 		}
 	}()
 
@@ -173,6 +260,7 @@ func testCtl(t *testing.T, testFunc func(ctlCtx), opts ...ctlOption) {
 	go func() {
 		defer close(donec)
 		testFunc(ret)
+		t.Log("---testFunc logic DONE")
 	}()
 
 	timeout := 2*ret.dialTimeout + time.Second
@@ -183,6 +271,15 @@ func testCtl(t *testing.T, testFunc func(ctlCtx), opts ...ctlOption) {
 	case <-time.After(timeout):
 		testutil.FatalStack(t, fmt.Sprintf("test timed out after %v", timeout))
 	case <-donec:
+	}
+
+	t.Log("closing test cluster...")
+	assert.NoError(t, epc.Close())
+	epc = nil
+	t.Log("closed test cluster...")
+
+	if testOfflineFunc != nil {
+		testOfflineFunc(ret)
 	}
 }
 
@@ -227,6 +324,16 @@ func (cx *ctlCtx) prefixArgs(eps []string) []string {
 // Make sure to unset environment variables after tests.
 func (cx *ctlCtx) PrefixArgs() []string {
 	return cx.prefixArgs(cx.epc.EndpointsV3())
+}
+
+// PrefixArgsUtl returns prefix of the command that is either etcdctl or etcdutl
+// depending on cx configuration.
+// Please not thet 'utl' compatible commands does not consume --endpoints flag.
+func (cx *ctlCtx) PrefixArgsUtl() []string {
+	if cx.etcdutl {
+		return []string{utlBinPath}
+	}
+	return []string{ctlBinPath}
 }
 
 func isGRPCTimedout(err error) bool {

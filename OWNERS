@@ -1,9 +1,0 @@
-approvers:
-- hexfusion
-reviewers:
-- deads2k
-- crawford
-- hexfusion
-- smarterclayton
-- wking
-component: "Etcd"

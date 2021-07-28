@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build linux
 // +build linux
 
 package netutil
@@ -24,7 +25,7 @@ import (
 	"sort"
 	"syscall"
 
-	"go.etcd.io/etcd/pkg/cpuutil"
+	"go.etcd.io/etcd/pkg/v3/cpuutil"
 )
 
 var errNoDefaultRoute = fmt.Errorf("could not find default route")

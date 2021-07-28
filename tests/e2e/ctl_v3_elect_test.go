@@ -20,14 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"go.etcd.io/etcd/pkg/expect"
+	"go.etcd.io/etcd/pkg/v3/expect"
 )
 
 func TestCtlV3Elect(t *testing.T) {
-	oldenv := os.Getenv("EXPECT_DEBUG")
-	defer os.Setenv("EXPECT_DEBUG", oldenv)
-	os.Setenv("EXPECT_DEBUG", "1")
-
 	testCtl(t, testElect)
 }
 

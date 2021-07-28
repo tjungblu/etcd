@@ -18,27 +18,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
-	"go.etcd.io/etcd/etcdserver/etcdserverpb"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 
-func TestCtlV3MemberList(t *testing.T)          { testCtl(t, memberListTest) }
-func TestCtlV3MemberListNoTLS(t *testing.T)     { testCtl(t, memberListTest, withCfg(configNoTLS)) }
-func TestCtlV3MemberListClientTLS(t *testing.T) { testCtl(t, memberListTest, withCfg(configClientTLS)) }
-func TestCtlV3MemberListClientAutoTLS(t *testing.T) {
-	testCtl(t, memberListTest, withCfg(configClientAutoTLS))
+func TestCtlV3MemberList(t *testing.T)        { testCtl(t, memberListTest) }
+func TestCtlV3MemberListWithHex(t *testing.T) { testCtl(t, memberListWithHexTest) }
+func TestCtlV3MemberListNoTLS(t *testing.T)   { testCtl(t, memberListTest, withCfg(*newConfigNoTLS())) }
+func TestCtlV3MemberListClientTLS(t *testing.T) {
+	testCtl(t, memberListTest, withCfg(*newConfigClientTLS()))
 }
-func TestCtlV3MemberListPeerTLS(t *testing.T) { testCtl(t, memberListTest, withCfg(configPeerTLS)) }
+func TestCtlV3MemberListClientAutoTLS(t *testing.T) {
+	testCtl(t, memberListTest, withCfg(*newConfigClientAutoTLS()))
+}
+func TestCtlV3MemberListPeerTLS(t *testing.T) {
+	testCtl(t, memberListTest, withCfg(*newConfigPeerTLS()))
+}
 func TestCtlV3MemberRemove(t *testing.T) {
 	testCtl(t, memberRemoveTest, withQuorum(), withNoStrictReconfig())
 }
 func TestCtlV3MemberRemoveNoTLS(t *testing.T) {
-	testCtl(t, memberRemoveTest, withQuorum(), withNoStrictReconfig(), withCfg(configNoTLS))
+	testCtl(t, memberRemoveTest, withQuorum(), withNoStrictReconfig(), withCfg(*newConfigNoTLS()))
 }
 func TestCtlV3MemberRemoveClientTLS(t *testing.T) {
-	testCtl(t, memberRemoveTest, withQuorum(), withNoStrictReconfig(), withCfg(configClientTLS))
+	testCtl(t, memberRemoveTest, withQuorum(), withNoStrictReconfig(), withCfg(*newConfigClientTLS()))
 }
 func TestCtlV3MemberRemoveClientAutoTLS(t *testing.T) {
 	testCtl(t, memberRemoveTest, withQuorum(), withNoStrictReconfig(), withCfg(
@@ -51,25 +57,31 @@ func TestCtlV3MemberRemoveClientAutoTLS(t *testing.T) {
 		}))
 }
 func TestCtlV3MemberRemovePeerTLS(t *testing.T) {
-	testCtl(t, memberRemoveTest, withQuorum(), withNoStrictReconfig(), withCfg(configPeerTLS))
+	testCtl(t, memberRemoveTest, withQuorum(), withNoStrictReconfig(), withCfg(*newConfigPeerTLS()))
 }
-func TestCtlV3MemberAdd(t *testing.T)          { testCtl(t, memberAddTest) }
-func TestCtlV3MemberAddNoTLS(t *testing.T)     { testCtl(t, memberAddTest, withCfg(configNoTLS)) }
-func TestCtlV3MemberAddClientTLS(t *testing.T) { testCtl(t, memberAddTest, withCfg(configClientTLS)) }
+func TestCtlV3MemberAdd(t *testing.T)      { testCtl(t, memberAddTest) }
+func TestCtlV3MemberAddNoTLS(t *testing.T) { testCtl(t, memberAddTest, withCfg(*newConfigNoTLS())) }
+func TestCtlV3MemberAddClientTLS(t *testing.T) {
+	testCtl(t, memberAddTest, withCfg(*newConfigClientTLS()))
+}
 func TestCtlV3MemberAddClientAutoTLS(t *testing.T) {
-	testCtl(t, memberAddTest, withCfg(configClientAutoTLS))
+	testCtl(t, memberAddTest, withCfg(*newConfigClientAutoTLS()))
 }
-func TestCtlV3MemberAddPeerTLS(t *testing.T)    { testCtl(t, memberAddTest, withCfg(configPeerTLS)) }
+func TestCtlV3MemberAddPeerTLS(t *testing.T)    { testCtl(t, memberAddTest, withCfg(*newConfigPeerTLS())) }
 func TestCtlV3MemberAddForLearner(t *testing.T) { testCtl(t, memberAddForLearnerTest) }
 func TestCtlV3MemberUpdate(t *testing.T)        { testCtl(t, memberUpdateTest) }
-func TestCtlV3MemberUpdateNoTLS(t *testing.T)   { testCtl(t, memberUpdateTest, withCfg(configNoTLS)) }
+func TestCtlV3MemberUpdateNoTLS(t *testing.T) {
+	testCtl(t, memberUpdateTest, withCfg(*newConfigNoTLS()))
+}
 func TestCtlV3MemberUpdateClientTLS(t *testing.T) {
-	testCtl(t, memberUpdateTest, withCfg(configClientTLS))
+	testCtl(t, memberUpdateTest, withCfg(*newConfigClientTLS()))
 }
 func TestCtlV3MemberUpdateClientAutoTLS(t *testing.T) {
-	testCtl(t, memberUpdateTest, withCfg(configClientAutoTLS))
+	testCtl(t, memberUpdateTest, withCfg(*newConfigClientAutoTLS()))
 }
-func TestCtlV3MemberUpdatePeerTLS(t *testing.T) { testCtl(t, memberUpdateTest, withCfg(configPeerTLS)) }
+func TestCtlV3MemberUpdatePeerTLS(t *testing.T) {
+	testCtl(t, memberUpdateTest, withCfg(*newConfigPeerTLS()))
+}
 
 func memberListTest(cx ctlCtx) {
 	if err := ctlV3MemberList(cx); err != nil {
@@ -108,6 +120,52 @@ func getMemberList(cx ctlCtx) (etcdserverpb.MemberListResponse, error) {
 		return etcdserverpb.MemberListResponse{}, err
 	}
 	return resp, nil
+}
+
+func memberListWithHexTest(cx ctlCtx) {
+	resp, err := getMemberList(cx)
+	if err != nil {
+		cx.t.Fatalf("getMemberList error (%v)", err)
+	}
+
+	cmdArgs := append(cx.PrefixArgs(), "--write-out", "json", "--hex", "member", "list")
+
+	proc, err := spawnCmd(cmdArgs)
+	if err != nil {
+		cx.t.Fatalf("memberListWithHexTest error (%v)", err)
+	}
+	var txt string
+	txt, err = proc.Expect("members")
+	if err != nil {
+		cx.t.Fatalf("memberListWithHexTest error (%v)", err)
+	}
+	if err = proc.Close(); err != nil {
+		cx.t.Fatalf("memberListWithHexTest error (%v)", err)
+	}
+	hexResp := etcdserverpb.MemberListResponse{}
+	dec := json.NewDecoder(strings.NewReader(txt))
+	if err := dec.Decode(&hexResp); err == io.EOF {
+		cx.t.Fatalf("memberListWithHexTest error (%v)", err)
+	}
+	num := len(resp.Members)
+	hexNum := len(hexResp.Members)
+	if num != hexNum {
+		cx.t.Fatalf("member number,expected %d,got %d", num, hexNum)
+	}
+	if num == 0 {
+		cx.t.Fatal("member number is 0")
+	}
+	for i := 0; i < num; i++ {
+		if resp.Members[i].Name != hexResp.Members[i].Name {
+			cx.t.Fatalf("member name,expected %v,got %v", resp.Members[i].Name, hexResp.Members[i].Name)
+		}
+		if !reflect.DeepEqual(resp.Members[i].PeerURLs, hexResp.Members[i].PeerURLs) {
+			cx.t.Fatalf("member peerURLs,expected %v,got %v", resp.Members[i].PeerURLs, hexResp.Members[i].PeerURLs)
+		}
+		if !reflect.DeepEqual(resp.Members[i].ClientURLs, hexResp.Members[i].ClientURLs) {
+			cx.t.Fatalf("member clientURLS,expected %v,got %v", resp.Members[i].ClientURLs, hexResp.Members[i].ClientURLs)
+		}
+	}
 }
 
 func memberRemoveTest(cx ctlCtx) {

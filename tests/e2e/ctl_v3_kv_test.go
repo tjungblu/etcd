@@ -22,33 +22,34 @@ import (
 )
 
 func TestCtlV3Put(t *testing.T)              { testCtl(t, putTest, withDialTimeout(7*time.Second)) }
-func TestCtlV3PutNoTLS(t *testing.T)         { testCtl(t, putTest, withCfg(configNoTLS)) }
-func TestCtlV3PutClientTLS(t *testing.T)     { testCtl(t, putTest, withCfg(configClientTLS)) }
-func TestCtlV3PutClientAutoTLS(t *testing.T) { testCtl(t, putTest, withCfg(configClientAutoTLS)) }
-func TestCtlV3PutPeerTLS(t *testing.T)       { testCtl(t, putTest, withCfg(configPeerTLS)) }
+func TestCtlV3PutNoTLS(t *testing.T)         { testCtl(t, putTest, withCfg(*newConfigNoTLS())) }
+func TestCtlV3PutClientTLS(t *testing.T)     { testCtl(t, putTest, withCfg(*newConfigClientTLS())) }
+func TestCtlV3PutClientAutoTLS(t *testing.T) { testCtl(t, putTest, withCfg(*newConfigClientAutoTLS())) }
+func TestCtlV3PutPeerTLS(t *testing.T)       { testCtl(t, putTest, withCfg(*newConfigPeerTLS())) }
 func TestCtlV3PutTimeout(t *testing.T)       { testCtl(t, putTest, withDialTimeout(0)) }
 func TestCtlV3PutClientTLSFlagByEnv(t *testing.T) {
-	testCtl(t, putTest, withCfg(configClientTLS), withFlagByEnv())
+	testCtl(t, putTest, withCfg(*newConfigClientTLS()), withFlagByEnv())
 }
 func TestCtlV3PutIgnoreValue(t *testing.T) { testCtl(t, putTestIgnoreValue) }
 func TestCtlV3PutIgnoreLease(t *testing.T) { testCtl(t, putTestIgnoreLease) }
 
 func TestCtlV3Get(t *testing.T)              { testCtl(t, getTest) }
-func TestCtlV3GetNoTLS(t *testing.T)         { testCtl(t, getTest, withCfg(configNoTLS)) }
-func TestCtlV3GetClientTLS(t *testing.T)     { testCtl(t, getTest, withCfg(configClientTLS)) }
-func TestCtlV3GetClientAutoTLS(t *testing.T) { testCtl(t, getTest, withCfg(configClientAutoTLS)) }
-func TestCtlV3GetPeerTLS(t *testing.T)       { testCtl(t, getTest, withCfg(configPeerTLS)) }
+func TestCtlV3GetNoTLS(t *testing.T)         { testCtl(t, getTest, withCfg(*newConfigNoTLS())) }
+func TestCtlV3GetClientTLS(t *testing.T)     { testCtl(t, getTest, withCfg(*newConfigClientTLS())) }
+func TestCtlV3GetClientAutoTLS(t *testing.T) { testCtl(t, getTest, withCfg(*newConfigClientAutoTLS())) }
+func TestCtlV3GetPeerTLS(t *testing.T)       { testCtl(t, getTest, withCfg(*newConfigPeerTLS())) }
 func TestCtlV3GetTimeout(t *testing.T)       { testCtl(t, getTest, withDialTimeout(0)) }
 func TestCtlV3GetQuorum(t *testing.T)        { testCtl(t, getTest, withQuorum()) }
 
-func TestCtlV3GetFormat(t *testing.T)   { testCtl(t, getFormatTest) }
-func TestCtlV3GetRev(t *testing.T)      { testCtl(t, getRevTest) }
-func TestCtlV3GetKeysOnly(t *testing.T) { testCtl(t, getKeysOnlyTest) }
+func TestCtlV3GetFormat(t *testing.T)    { testCtl(t, getFormatTest) }
+func TestCtlV3GetRev(t *testing.T)       { testCtl(t, getRevTest) }
+func TestCtlV3GetKeysOnly(t *testing.T)  { testCtl(t, getKeysOnlyTest) }
+func TestCtlV3GetCountOnly(t *testing.T) { testCtl(t, getCountOnlyTest) }
 
 func TestCtlV3Del(t *testing.T)          { testCtl(t, delTest) }
-func TestCtlV3DelNoTLS(t *testing.T)     { testCtl(t, delTest, withCfg(configNoTLS)) }
-func TestCtlV3DelClientTLS(t *testing.T) { testCtl(t, delTest, withCfg(configClientTLS)) }
-func TestCtlV3DelPeerTLS(t *testing.T)   { testCtl(t, delTest, withCfg(configPeerTLS)) }
+func TestCtlV3DelNoTLS(t *testing.T)     { testCtl(t, delTest, withCfg(*newConfigNoTLS())) }
+func TestCtlV3DelClientTLS(t *testing.T) { testCtl(t, delTest, withCfg(*newConfigClientTLS())) }
+func TestCtlV3DelPeerTLS(t *testing.T)   { testCtl(t, delTest, withCfg(*newConfigPeerTLS())) }
 func TestCtlV3DelTimeout(t *testing.T)   { testCtl(t, delTest, withDialTimeout(0)) }
 
 func TestCtlV3GetRevokedCRL(t *testing.T) {
@@ -232,6 +233,44 @@ func getKeysOnlyTest(cx ctlCtx) {
 	}
 	if err := spawnWithExpects(cmdArgs, "val"); err == nil {
 		cx.t.Fatalf("got value but passed --keys-only")
+	}
+}
+
+func getCountOnlyTest(cx ctlCtx) {
+	cmdArgs := append(cx.PrefixArgs(), []string{"get", "--count-only", "key", "--prefix", "--write-out=fields"}...)
+	if err := spawnWithExpects(cmdArgs, "\"Count\" : 0"); err != nil {
+		cx.t.Fatal(err)
+	}
+	if err := ctlV3Put(cx, "key", "val", ""); err != nil {
+		cx.t.Fatal(err)
+	}
+	cmdArgs = append(cx.PrefixArgs(), []string{"get", "--count-only", "key", "--prefix", "--write-out=fields"}...)
+	if err := spawnWithExpects(cmdArgs, "\"Count\" : 1"); err != nil {
+		cx.t.Fatal(err)
+	}
+	if err := ctlV3Put(cx, "key1", "val", ""); err != nil {
+		cx.t.Fatal(err)
+	}
+	if err := ctlV3Put(cx, "key1", "val", ""); err != nil {
+		cx.t.Fatal(err)
+	}
+	cmdArgs = append(cx.PrefixArgs(), []string{"get", "--count-only", "key", "--prefix", "--write-out=fields"}...)
+	if err := spawnWithExpects(cmdArgs, "\"Count\" : 2"); err != nil {
+		cx.t.Fatal(err)
+	}
+	if err := ctlV3Put(cx, "key2", "val", ""); err != nil {
+		cx.t.Fatal(err)
+	}
+	cmdArgs = append(cx.PrefixArgs(), []string{"get", "--count-only", "key", "--prefix", "--write-out=fields"}...)
+	if err := spawnWithExpects(cmdArgs, "\"Count\" : 3"); err != nil {
+		cx.t.Fatal(err)
+	}
+	expected := []string{
+		"\"Count\" : 3",
+	}
+	cmdArgs = append(cx.PrefixArgs(), []string{"get", "--count-only", "key3", "--prefix", "--write-out=fields"}...)
+	if err := spawnWithExpects(cmdArgs, expected...); err == nil {
+		cx.t.Fatal(err)
 	}
 }
 

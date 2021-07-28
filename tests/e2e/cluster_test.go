@@ -16,17 +16,26 @@ package e2e
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/url"
 	"os"
+	"path"
 	"strings"
+	"testing"
+	"time"
 
-	"go.etcd.io/etcd/etcdserver"
+	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/tests/v3/integration"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
 )
 
 const etcdProcessBasePort = 20000
 
 type clientConnType int
+
+var (
+	fixturesDir = integration.MustAbsPath("../fixtures")
+)
 
 const (
 	clientNonTLS clientConnType = iota
@@ -34,63 +43,90 @@ const (
 	clientTLSAndNonTLS
 )
 
-var (
-	configNoTLS = etcdProcessClusterConfig{
-		clusterSize:  3,
+func newConfigNoTLS() *etcdProcessClusterConfig {
+	return &etcdProcessClusterConfig{clusterSize: 3,
 		initialToken: "new",
 	}
-	configAutoTLS = etcdProcessClusterConfig{
+}
+
+func newConfigAutoTLS() *etcdProcessClusterConfig {
+	return &etcdProcessClusterConfig{
 		clusterSize:   3,
 		isPeerTLS:     true,
 		isPeerAutoTLS: true,
 		initialToken:  "new",
 	}
-	configTLS = etcdProcessClusterConfig{
+}
+
+func newConfigTLS() *etcdProcessClusterConfig {
+	return &etcdProcessClusterConfig{
 		clusterSize:  3,
 		clientTLS:    clientTLS,
 		isPeerTLS:    true,
 		initialToken: "new",
 	}
-	configClientTLS = etcdProcessClusterConfig{
+}
+
+func newConfigClientTLS() *etcdProcessClusterConfig {
+	return &etcdProcessClusterConfig{
 		clusterSize:  3,
 		clientTLS:    clientTLS,
 		initialToken: "new",
 	}
-	configClientBoth = etcdProcessClusterConfig{
+}
+
+func newConfigClientBoth() *etcdProcessClusterConfig {
+	return &etcdProcessClusterConfig{
 		clusterSize:  1,
 		clientTLS:    clientTLSAndNonTLS,
 		initialToken: "new",
 	}
-	configClientAutoTLS = etcdProcessClusterConfig{
+}
+
+func newConfigClientAutoTLS() *etcdProcessClusterConfig {
+	return &etcdProcessClusterConfig{
 		clusterSize:     1,
 		isClientAutoTLS: true,
 		clientTLS:       clientTLS,
 		initialToken:    "new",
 	}
-	configPeerTLS = etcdProcessClusterConfig{
+}
+
+func newConfigPeerTLS() *etcdProcessClusterConfig {
+	return &etcdProcessClusterConfig{
 		clusterSize:  3,
 		isPeerTLS:    true,
 		initialToken: "new",
 	}
-	configClientTLSCertAuth = etcdProcessClusterConfig{
+}
+
+func newConfigClientTLSCertAuth() *etcdProcessClusterConfig {
+	return &etcdProcessClusterConfig{
 		clusterSize:           1,
 		clientTLS:             clientTLS,
 		initialToken:          "new",
 		clientCertAuthEnabled: true,
 	}
-	configClientTLSCertAuthWithNoCN = etcdProcessClusterConfig{
+}
+
+func newConfigClientTLSCertAuthWithNoCN() *etcdProcessClusterConfig {
+	return &etcdProcessClusterConfig{
 		clusterSize:           1,
 		clientTLS:             clientTLS,
 		initialToken:          "new",
 		clientCertAuthEnabled: true,
 		noCN:                  true,
 	}
-	configJWT = etcdProcessClusterConfig{
-		clusterSize:   1,
-		initialToken:  "new",
-		authTokenOpts: "jwt,pub-key=../../integration/fixtures/server.crt,priv-key=../../integration/fixtures/server.key.insecure,sign-method=RS256,ttl=1s",
+}
+
+func newConfigJWT() *etcdProcessClusterConfig {
+	return &etcdProcessClusterConfig{
+		clusterSize:  1,
+		initialToken: "new",
+		authTokenOpts: "jwt,pub-key=" + path.Join(fixturesDir, "server.crt") +
+			",priv-key=" + path.Join(fixturesDir, "server.key.insecure") + ",sign-method=RS256,ttl=1s",
 	}
-)
+}
 
 func configStandalone(cfg etcdProcessClusterConfig) *etcdProcessClusterConfig {
 	ret := cfg
@@ -99,6 +135,7 @@ func configStandalone(cfg etcdProcessClusterConfig) *etcdProcessClusterConfig {
 }
 
 type etcdProcessCluster struct {
+	lg    *zap.Logger
 	cfg   *etcdProcessClusterConfig
 	procs []etcdProcess
 }
@@ -134,14 +171,20 @@ type etcdProcessClusterConfig struct {
 	enableV2            bool
 	initialCorruptCheck bool
 	authTokenOpts       string
+	v2deprecation       string
+
+	rollingStart bool
 }
 
 // newEtcdProcessCluster launches a new cluster from etcd processes, returning
 // a new etcdProcessCluster once all nodes are ready to accept client requests.
-func newEtcdProcessCluster(cfg *etcdProcessClusterConfig) (*etcdProcessCluster, error) {
-	etcdCfgs := cfg.etcdServerProcessConfigs()
+func newEtcdProcessCluster(t testing.TB, cfg *etcdProcessClusterConfig) (*etcdProcessCluster, error) {
+	skipInShortMode(t)
+
+	etcdCfgs := cfg.etcdServerProcessConfigs(t)
 	epc := &etcdProcessCluster{
 		cfg:   cfg,
+		lg:    zaptest.NewLogger(t),
 		procs: make([]etcdProcess, cfg.clusterSize),
 	}
 
@@ -150,13 +193,19 @@ func newEtcdProcessCluster(cfg *etcdProcessClusterConfig) (*etcdProcessCluster, 
 		proc, err := newEtcdProcess(etcdCfgs[i])
 		if err != nil {
 			epc.Close()
-			return nil, err
+			return nil, fmt.Errorf("Cannot configure: %v", err)
 		}
 		epc.procs[i] = proc
 	}
 
-	if err := epc.Start(); err != nil {
-		return nil, err
+	if cfg.rollingStart {
+		if err := epc.RollingStart(); err != nil {
+			return nil, fmt.Errorf("Cannot rolling-start: %v", err)
+		}
+	} else {
+		if err := epc.Start(); err != nil {
+			return nil, fmt.Errorf("Cannot start: %v", err)
+		}
 	}
 	return epc, nil
 }
@@ -179,7 +228,9 @@ func (cfg *etcdProcessClusterConfig) peerScheme() string {
 	return peerScheme
 }
 
-func (cfg *etcdProcessClusterConfig) etcdServerProcessConfigs() []*etcdServerProcessConfig {
+func (cfg *etcdProcessClusterConfig) etcdServerProcessConfigs(tb testing.TB) []*etcdServerProcessConfig {
+	lg := zaptest.NewLogger(tb)
+
 	if cfg.basePort == 0 {
 		cfg.basePort = etcdProcessBasePort
 	}
@@ -209,14 +260,10 @@ func (cfg *etcdProcessClusterConfig) etcdServerProcessConfigs() []*etcdServerPro
 		}
 
 		purl := url.URL{Scheme: cfg.peerScheme(), Host: fmt.Sprintf("localhost:%d", port+1)}
-		name := fmt.Sprintf("testname%d", i)
+		name := fmt.Sprintf("test-%d", i)
 		dataDirPath := cfg.dataDirPath
 		if cfg.dataDirPath == "" {
-			var derr error
-			dataDirPath, derr = ioutil.TempDir("", name+".etcd")
-			if derr != nil {
-				panic(fmt.Sprintf("could not get tempdir for datadir: %s", derr))
-			}
+			dataDirPath = tb.TempDir()
 		}
 		initialCluster[i] = fmt.Sprintf("%s=%s", name, purl.String())
 
@@ -263,7 +310,12 @@ func (cfg *etcdProcessClusterConfig) etcdServerProcessConfigs() []*etcdServerPro
 			args = append(args, "--auth-token", cfg.authTokenOpts)
 		}
 
+		if cfg.v2deprecation != "" {
+			args = append(args, "--v2-deprecation", cfg.v2deprecation)
+		}
+
 		etcdCfgs[i] = &etcdServerProcessConfig{
+			lg:           lg,
 			execPath:     cfg.execPath,
 			args:         args,
 			tlsArgs:      cfg.tlsArgs(),
@@ -347,6 +399,10 @@ func (epc *etcdProcessCluster) Start() error {
 	return epc.start(func(ep etcdProcess) error { return ep.Start() })
 }
 
+func (epc *etcdProcessCluster) RollingStart() error {
+	return epc.rollingStart(func(ep etcdProcess) error { return ep.Start() })
+}
+
 func (epc *etcdProcessCluster) Restart() error {
 	return epc.start(func(ep etcdProcess) error { return ep.Restart() })
 }
@@ -355,6 +411,22 @@ func (epc *etcdProcessCluster) start(f func(ep etcdProcess) error) error {
 	readyC := make(chan error, len(epc.procs))
 	for i := range epc.procs {
 		go func(n int) { readyC <- f(epc.procs[n]) }(i)
+	}
+	for range epc.procs {
+		if err := <-readyC; err != nil {
+			epc.Close()
+			return err
+		}
+	}
+	return nil
+}
+
+func (epc *etcdProcessCluster) rollingStart(f func(ep etcdProcess) error) error {
+	readyC := make(chan error, len(epc.procs))
+	for i := range epc.procs {
+		go func(n int) { readyC <- f(epc.procs[n]) }(i)
+		// make sure the servers do not start at the same time
+		time.Sleep(time.Second)
 	}
 	for range epc.procs {
 		if err := <-readyC; err != nil {
@@ -382,6 +454,7 @@ func (epc *etcdProcessCluster) Stop() (err error) {
 }
 
 func (epc *etcdProcessCluster) Close() error {
+	epc.lg.Info("closing test cluster...")
 	err := epc.Stop()
 	for _, p := range epc.procs {
 		// p is nil when newEtcdProcess fails in the middle
@@ -393,6 +466,7 @@ func (epc *etcdProcessCluster) Close() error {
 			err = cerr
 		}
 	}
+	epc.lg.Info("closed test cluster.")
 	return err
 }
 
