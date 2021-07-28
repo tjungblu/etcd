@@ -44,6 +44,7 @@ require (
 	golang.org/x/net v0.0.0-20201021035429-f5854403a974
 	golang.org/x/sys v0.0.0-20210119212857-b64e53b001e4
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2
+	golang.org/x/tools v0.0.0-20190524140312-2c0ae7006135 // indirect
 	google.golang.org/grpc v1.26.0
 	gopkg.in/cheggaaa/pb.v1 v1.0.25
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
