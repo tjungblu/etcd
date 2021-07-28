@@ -130,7 +130,6 @@ func interestingGoroutines() (gs []string) {
 		}
 		stack := strings.TrimSpace(sl[1])
 		if stack == "" ||
-			strings.Contains(stack, "created by testing.runTests.func1") ||
 			strings.Contains(stack, "sync.(*WaitGroup).Done") ||
 			strings.Contains(stack, "os.(*file).close") ||
 			strings.Contains(stack, "os.(*Process).Release") ||

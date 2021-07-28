@@ -15,7 +15,6 @@
 package mvcc
 
 import (
-	"go.etcd.io/etcd/auth"
 	"sync"
 	"time"
 

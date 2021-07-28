@@ -234,9 +234,8 @@ func (h *snapshotHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msgSizeVal := m.Size()
-	msgSize := humanize.Bytes(uint64(msgSizeVal))
-	receivedBytes.WithLabelValues(from).Add(float64(msgSizeVal))
+	msgSize := m.Size()
+	receivedBytes.WithLabelValues(from).Add(float64(msgSize))
 
 	if m.Type != raftpb.MsgSnap {
 		h.lg.Warn(
@@ -281,7 +280,6 @@ func (h *snapshotHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbSize := humanize.Bytes(uint64(n))
 	receivedBytes.WithLabelValues(from).Add(float64(n))
 
 	downloadTook := time.Since(start)

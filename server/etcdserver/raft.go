@@ -435,9 +435,6 @@ func startNode(cfg config.ServerConfig, cl *membership.RaftCluster, ids []types.
 	if cfg.UnsafeNoFsync {
 		w.SetUnsafeNoFsync()
 	}
-	if cfg.UnsafeNoFsync {
-		w.SetUnsafeNoFsync()
-	}
 	peers := make([]raft.Peer, len(ids))
 	for i, id := range ids {
 		var ctx []byte

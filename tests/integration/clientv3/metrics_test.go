@@ -93,7 +93,7 @@ func TestV3ClientMetrics(t *testing.T) {
 
 	pBefore := sumCountersForMetricAndLabels(t, url, "grpc_client_started_total", "Put", "unary")
 
-	_, err := cli.Put(context.Background(), "foo", "bar")
+	_, err = cli.Put(context.Background(), "foo", "bar")
 	if err != nil {
 		t.Errorf("Error putting value in key store")
 	}

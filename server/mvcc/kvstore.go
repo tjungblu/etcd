@@ -57,15 +57,9 @@ type StoreConfig struct {
 	CompactionBatchLimit int
 }
 
-type StoreConfig struct {
-	CompactionBatchLimit int
-}
-
 type store struct {
 	ReadView
 	WriteView
-
-	cfg StoreConfig
 
 	cfg StoreConfig
 
@@ -511,36 +505,6 @@ func (s *store) Close() error {
 	close(s.stopc)
 	s.fifoSched.Stop()
 	return nil
-}
-
-func (s *store) setupMetricsReporter() {
-	b := s.b
-	reportDbTotalSizeInBytesMu.Lock()
-	reportDbTotalSizeInBytes = func() float64 { return float64(b.Size()) }
-	reportDbTotalSizeInBytesMu.Unlock()
-	reportDbTotalSizeInBytesDebugMu.Lock()
-	reportDbTotalSizeInBytesDebug = func() float64 { return float64(b.Size()) }
-	reportDbTotalSizeInBytesDebugMu.Unlock()
-	reportDbTotalSizeInUseInBytesMu.Lock()
-	reportDbTotalSizeInUseInBytes = func() float64 { return float64(b.SizeInUse()) }
-	reportDbTotalSizeInUseInBytesMu.Unlock()
-	reportDbOpenReadTxNMu.Lock()
-	reportDbOpenReadTxN = func() float64 { return float64(b.OpenReadTxN()) }
-	reportDbOpenReadTxNMu.Unlock()
-	reportCurrentRevMu.Lock()
-	reportCurrentRev = func() float64 {
-		s.revMu.RLock()
-		defer s.revMu.RUnlock()
-		return float64(s.currentRev)
-	}
-	reportCurrentRevMu.Unlock()
-	reportCompactRevMu.Lock()
-	reportCompactRev = func() float64 {
-		s.revMu.RLock()
-		defer s.revMu.RUnlock()
-		return float64(s.compactMainRev)
-	}
-	reportCompactRevMu.Unlock()
 }
 
 func (s *store) setupMetricsReporter() {

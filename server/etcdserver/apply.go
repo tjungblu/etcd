@@ -278,8 +278,6 @@ func (a *applierV3backend) Put(ctx context.Context, txn mvcc.TxnWrite, p *pb.Put
 		if err != nil {
 			return nil, nil, err
 		}
-		trace.EnableStep()
-		trace.Step("get previous kv pair")
 	}
 	if p.IgnoreValue || p.IgnoreLease {
 		if rr == nil || len(rr.KVs) == 0 {

@@ -16,7 +16,6 @@ package v3rpc
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
@@ -343,9 +342,4 @@ func monitorLeader(s *etcdserver.EtcdServer) *streamsMap {
 	})
 
 	return smap
-}
-
-func metadataGet(md metadata.MD, k string) []string {
-	k = strings.ToLower(k)
-	return md[k]
 }

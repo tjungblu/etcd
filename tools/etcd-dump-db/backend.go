@@ -17,7 +17,6 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
-	"go.etcd.io/etcd/auth/authpb"
 	"path/filepath"
 
 	"go.etcd.io/etcd/api/v3/authpb"

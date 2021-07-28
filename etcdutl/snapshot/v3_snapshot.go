@@ -26,7 +26,6 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/dustin/go-humanize"
 	bolt "go.etcd.io/bbolt"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/pkg/v3/fileutil"

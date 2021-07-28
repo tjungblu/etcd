@@ -65,26 +65,13 @@ func (b *bundle) NewWithMode(mode string) (grpccredentials.Bundle, error) {
 }
 
 // transportCredential implements "grpccredentials.TransportCredentials" interface.
-// transportCredential wraps TransportCredentials to track which
-// addresses are dialed for which endpoints, and then sets the authority when checking the endpoint's cert to the
-// hostname or IP of the dialed endpoint.
-// This is a workaround of a gRPC load balancer issue. gRPC uses the dialed target's service name as the authority when
-// checking all endpoint certs, which does not work for etcd servers using their hostname or IP as the Subject Alternative Name
-// in their TLS certs.
-// To enable, include both WithTransportCredentials(creds) and WithContextDialer(creds.Dialer)
-// when dialing.
 type transportCredential struct {
 	gtc grpccredentials.TransportCredentials
-	mu  sync.Mutex
-	// addrToEndpoint maps from the connection addresses that are dialed to the hostname or IP of the
-	// endpoint provided to the dialer when dialing
-	addrToEndpoint map[string]string
 }
 
 func newTransportCredential(cfg *tls.Config) *transportCredential {
 	return &transportCredential{
-		gtc:            grpccredentials.NewTLS(cfg),
-		addrToEndpoint: map[string]string{},
+		gtc: grpccredentials.NewTLS(cfg),
 	}
 }
 
@@ -101,31 +88,13 @@ func (tc *transportCredential) Info() grpccredentials.ProtocolInfo {
 }
 
 func (tc *transportCredential) Clone() grpccredentials.TransportCredentials {
-	copy := map[string]string{}
-	tc.mu.Lock()
-	for k, v := range tc.addrToEndpoint {
-		copy[k] = v
-	}
-	tc.mu.Unlock()
 	return &transportCredential{
-		gtc:            tc.gtc.Clone(),
-		addrToEndpoint: copy,
+		gtc: tc.gtc.Clone(),
 	}
 }
 
 func (tc *transportCredential) OverrideServerName(serverNameOverride string) error {
 	return tc.gtc.OverrideServerName(serverNameOverride)
-}
-
-func (tc *transportCredential) Dialer(ctx context.Context, dialEp string) (net.Conn, error) {
-	// Keep track of which addresses are dialed for which endpoints
-	conn, err := endpoint.Dialer(ctx, dialEp)
-	if conn != nil {
-		tc.mu.Lock()
-		tc.addrToEndpoint[conn.RemoteAddr().String()] = dialEp
-		tc.mu.Unlock()
-	}
-	return conn, err
 }
 
 // perRPCCredential implements "grpccredentials.PerRPCCredentials" interface.

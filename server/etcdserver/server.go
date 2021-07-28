@@ -2359,13 +2359,6 @@ func (s *EtcdServer) snapshot(snapi uint64, confState raftpb.ConfState) {
 		if err = s.r.storage.Release(snap); err != nil {
 			lg.Panic("failed to release wal", zap.Error(err))
 		}
-		if err = s.r.storage.Release(snap); err != nil {
-			if lg != nil {
-				lg.Panic("failed to release wal", zap.Error(err))
-			} else {
-				plog.Panicf("failed to release wal %v", err)
-			}
-		}
 
 		lg.Info(
 			"saved snapshot",
