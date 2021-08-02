@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !cov && !cluster_proxy
 // +build !cov,!cluster_proxy
 
 package e2e
@@ -20,13 +21,13 @@ import (
 	"fmt"
 	"testing"
 
-	"go.etcd.io/etcd/version"
+	"go.etcd.io/etcd/api/v3/version"
 )
 
 func TestV3CurlCipherSuitesValid(t *testing.T)    { testV3CurlCipherSuites(t, true) }
 func TestV3CurlCipherSuitesMismatch(t *testing.T) { testV3CurlCipherSuites(t, false) }
 func testV3CurlCipherSuites(t *testing.T, valid bool) {
-	cc := configClientTLS
+	cc := newConfigClientTLS()
 	cc.clusterSize = 1
 	cc.cipherSuites = []string{
 		"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
@@ -40,7 +41,7 @@ func testV3CurlCipherSuites(t *testing.T, valid bool) {
 	if !valid {
 		testFunc = cipherSuiteTestMismatch
 	}
-	testCtl(t, testFunc, withCfg(cc))
+	testCtl(t, testFunc, withCfg(*cc))
 }
 
 func cipherSuiteTestValid(cx ctlCtx) {

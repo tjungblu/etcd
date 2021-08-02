@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !windows && !plan9
 // +build !windows,!plan9
 
 package osutil
@@ -61,8 +62,6 @@ func HandleInterrupts(lg *zap.Logger) {
 
 		if lg != nil {
 			lg.Info("received signal; shutting down", zap.String("signal", sig.String()))
-		} else {
-			plog.Noticef("received %v signal, shutting down...", sig)
 		}
 
 		for _, h := range ihs {

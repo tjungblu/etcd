@@ -17,28 +17,25 @@ package e2e
 import (
 	"fmt"
 	"math/rand"
-	"os"
 	"strings"
 	"testing"
-
-	"go.etcd.io/etcd/pkg/testutil"
 )
 
-func TestV2CurlNoTLS(t *testing.T)      { testCurlPutGet(t, &configNoTLS) }
-func TestV2CurlAutoTLS(t *testing.T)    { testCurlPutGet(t, &configAutoTLS) }
-func TestV2CurlAllTLS(t *testing.T)     { testCurlPutGet(t, &configTLS) }
-func TestV2CurlPeerTLS(t *testing.T)    { testCurlPutGet(t, &configPeerTLS) }
-func TestV2CurlClientTLS(t *testing.T)  { testCurlPutGet(t, &configClientTLS) }
-func TestV2CurlClientBoth(t *testing.T) { testCurlPutGet(t, &configClientBoth) }
+func TestV2CurlNoTLS(t *testing.T)      { testCurlPutGet(t, newConfigNoTLS()) }
+func TestV2CurlAutoTLS(t *testing.T)    { testCurlPutGet(t, newConfigAutoTLS()) }
+func TestV2CurlAllTLS(t *testing.T)     { testCurlPutGet(t, newConfigTLS()) }
+func TestV2CurlPeerTLS(t *testing.T)    { testCurlPutGet(t, newConfigPeerTLS()) }
+func TestV2CurlClientTLS(t *testing.T)  { testCurlPutGet(t, newConfigClientTLS()) }
+func TestV2CurlClientBoth(t *testing.T) { testCurlPutGet(t, newConfigClientBoth()) }
 func testCurlPutGet(t *testing.T, cfg *etcdProcessClusterConfig) {
-	defer testutil.AfterTest(t)
+	BeforeTestV2(t)
 
 	// test doesn't use quorum gets, so ensure there are no followers to avoid
 	// stale reads that will break the test
 	cfg = configStandalone(*cfg)
 
 	cfg.enableV2 = true
-	epc, err := newEtcdProcessCluster(cfg)
+	epc, err := newEtcdProcessCluster(t, cfg)
 	if err != nil {
 		t.Fatalf("could not start etcd process cluster (%v)", err)
 	}
@@ -66,13 +63,11 @@ func testCurlPutGet(t *testing.T, cfg *etcdProcessClusterConfig) {
 }
 
 func TestV2CurlIssue5182(t *testing.T) {
-	os.Setenv("ETCDCTL_API", "2")
-	defer os.Unsetenv("ETCDCTL_API")
-	defer testutil.AfterTest(t)
+	BeforeTestV2(t)
 
-	copied := configNoTLS
+	copied := newConfigNoTLS()
 	copied.enableV2 = true
-	epc := setupEtcdctlTest(t, &copied, false)
+	epc := setupEtcdctlTest(t, copied, false)
 	defer func() {
 		if err := epc.Close(); err != nil {
 			t.Fatalf("error closing etcd processes (%v)", err)

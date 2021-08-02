@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build cluster_proxy
 // +build cluster_proxy
 
 package e2e
@@ -21,10 +22,12 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 
-	"go.etcd.io/etcd/pkg/expect"
+	"go.etcd.io/etcd/pkg/v3/expect"
+	"go.uber.org/zap"
 )
 
 type proxyEtcdProcess struct {
@@ -113,6 +116,7 @@ func (p *proxyEtcdProcess) WithStopSignal(sig os.Signal) os.Signal {
 }
 
 type proxyProc struct {
+	lg       *zap.Logger
 	execPath string
 	args     []string
 	ep       string
@@ -128,7 +132,7 @@ func (pp *proxyProc) start() error {
 	if pp.proc != nil {
 		panic("already started")
 	}
-	proc, err := spawnCmd(append([]string{pp.execPath}, pp.args...))
+	proc, err := spawnCmdWithLogger(pp.lg, append([]string{pp.execPath}, pp.args...))
 	if err != nil {
 		return err
 	}
@@ -182,20 +186,23 @@ func proxyListenURL(cfg *etcdServerProcessConfig, portOffset int) string {
 func newProxyV2Proc(cfg *etcdServerProcessConfig) *proxyV2Proc {
 	listenAddr := proxyListenURL(cfg, 2)
 	name := fmt.Sprintf("testname-proxy-%p", cfg)
+	dataDir := path.Join(cfg.dataDirPath, name+".etcd")
 	args := []string{
 		"--name", name,
 		"--proxy", "on",
 		"--listen-client-urls", listenAddr,
 		"--initial-cluster", cfg.name + "=" + cfg.purl.String(),
+		"--data-dir", dataDir,
 	}
 	return &proxyV2Proc{
-		proxyProc{
+		proxyProc: proxyProc{
+			lg:       cfg.lg,
 			execPath: cfg.execPath,
 			args:     append(args, cfg.tlsArgs...),
 			ep:       listenAddr,
 			donec:    make(chan struct{}),
 		},
-		name + ".etcd",
+		dataDir: dataDir,
 	}
 }
 
@@ -204,7 +211,9 @@ func (v2p *proxyV2Proc) Start() error {
 	if err := v2p.start(); err != nil {
 		return err
 	}
-	return v2p.waitReady("httpproxy: endpoints found")
+	// The full line we are expecting in the logs:
+	// "caller":"httpproxy/director.go:65","msg":"endpoints found","endpoints":["http://localhost:20000"]}
+	return v2p.waitReady("endpoints found")
 }
 
 func (v2p *proxyV2Proc) Restart() error {
@@ -235,6 +244,7 @@ func newProxyV3Proc(cfg *etcdServerProcessConfig) *proxyV3Proc {
 		"--endpoints", cfg.acurl,
 		// pass-through member RPCs
 		"--advertise-client-url", "",
+		"--data-dir", cfg.dataDirPath,
 	}
 	murl := ""
 	if cfg.murl != "" {
@@ -245,13 +255,13 @@ func newProxyV3Proc(cfg *etcdServerProcessConfig) *proxyV3Proc {
 	for i := 0; i < len(cfg.tlsArgs); i++ {
 		switch cfg.tlsArgs[i] {
 		case "--cert-file":
-			tlsArgs = append(tlsArgs, "--cert", cfg.tlsArgs[i+1], "--cert-file", cfg.tlsArgs[i+1])
+			tlsArgs = append(tlsArgs, "--cert-file", cfg.tlsArgs[i+1])
 			i++
 		case "--key-file":
-			tlsArgs = append(tlsArgs, "--key", cfg.tlsArgs[i+1], "--key-file", cfg.tlsArgs[i+1])
+			tlsArgs = append(tlsArgs, "--key-file", cfg.tlsArgs[i+1])
 			i++
 		case "--trusted-ca-file":
-			tlsArgs = append(tlsArgs, "--cacert", cfg.tlsArgs[i+1], "--trusted-ca-file", cfg.tlsArgs[i+1])
+			tlsArgs = append(tlsArgs, "--trusted-ca-file", cfg.tlsArgs[i+1])
 			i++
 		case "--auto-tls":
 			tlsArgs = append(tlsArgs, "--auto-tls", "--insecure-skip-tls-verify")
@@ -261,9 +271,18 @@ func newProxyV3Proc(cfg *etcdServerProcessConfig) *proxyV3Proc {
 		default:
 			tlsArgs = append(tlsArgs, cfg.tlsArgs[i])
 		}
+
+		// Configure certificates for connection proxy ---> server.
+		// This certificate must NOT have CN set.
+		tlsArgs = append(tlsArgs,
+			"--cert", path.Join(fixturesDir, "client-nocn.crt"),
+			"--key", path.Join(fixturesDir, "client-nocn.key.insecure"),
+			"--cacert", path.Join(fixturesDir, "ca.crt"),
+			"--client-crl-file", path.Join(fixturesDir, "revoke.crl"))
 	}
 	return &proxyV3Proc{
 		proxyProc{
+			lg:       cfg.lg,
 			execPath: cfg.execPath,
 			args:     append(args, tlsArgs...),
 			ep:       listenAddr,

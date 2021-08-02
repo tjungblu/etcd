@@ -15,20 +15,21 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"go.etcd.io/etcd/pkg/expect"
+	"go.etcd.io/etcd/pkg/v3/expect"
 )
 
 func TestCtlV3Lock(t *testing.T) {
-	oldenv := os.Getenv("EXPECT_DEBUG")
-	defer os.Setenv("EXPECT_DEBUG", oldenv)
-	os.Setenv("EXPECT_DEBUG", "1")
-
 	testCtl(t, testLock)
+}
+
+func TestCtlV3LockWithCmd(t *testing.T) {
+	testCtl(t, testLockWithCmd)
 }
 
 func testLock(cx ctlCtx) {
@@ -99,6 +100,22 @@ func testLock(cx ctlCtx) {
 	}
 }
 
+func testLockWithCmd(cx ctlCtx) {
+	// exec command with zero exit code
+	echoCmd := []string{"echo"}
+	if err := ctlV3LockWithCmd(cx, echoCmd, ""); err != nil {
+		cx.t.Fatal(err)
+	}
+
+	// exec command with non-zero exit code
+	code := 3
+	awkCmd := []string{"awk", fmt.Sprintf("BEGIN{exit %d}", code)}
+	expect := fmt.Sprintf("Error: exit status %d", code)
+	if err := ctlV3LockWithCmd(cx, awkCmd, expect); err != nil {
+		cx.t.Fatal(err)
+	}
+}
+
 // ctlV3Lock creates a lock process with a channel listening for when it acquires the lock.
 func ctlV3Lock(cx ctlCtx, name string) (*expect.ExpectProcess, <-chan string, error) {
 	cmdArgs := append(cx.PrefixArgs(), "lock", name)
@@ -116,4 +133,12 @@ func ctlV3Lock(cx ctlCtx, name string) (*expect.ExpectProcess, <-chan string, er
 		outc <- s
 	}()
 	return proc, outc, err
+}
+
+// ctlV3LockWithCmd creates a lock process to exec command.
+func ctlV3LockWithCmd(cx ctlCtx, execCmd []string, as ...string) error {
+	// use command as lock name
+	cmdArgs := append(cx.PrefixArgs(), "lock", execCmd[0])
+	cmdArgs = append(cmdArgs, execCmd...)
+	return spawnWithExpects(cmdArgs, as...)
 }

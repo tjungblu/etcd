@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build cov
 // +build cov
 
 package e2e
@@ -22,22 +23,22 @@ import (
 )
 
 func TestCtlV3Watch(t *testing.T)          { testCtl(t, watchTest) }
-func TestCtlV3WatchNoTLS(t *testing.T)     { testCtl(t, watchTest, withCfg(configNoTLS)) }
-func TestCtlV3WatchClientTLS(t *testing.T) { testCtl(t, watchTest, withCfg(configClientTLS)) }
-func TestCtlV3WatchPeerTLS(t *testing.T)   { testCtl(t, watchTest, withCfg(configPeerTLS)) }
+func TestCtlV3WatchNoTLS(t *testing.T)     { testCtl(t, watchTest, withCfg(*newConfigNoTLS())) }
+func TestCtlV3WatchClientTLS(t *testing.T) { testCtl(t, watchTest, withCfg(*newConfigClientTLS())) }
+func TestCtlV3WatchPeerTLS(t *testing.T)   { testCtl(t, watchTest, withCfg(*newConfigPeerTLS())) }
 func TestCtlV3WatchTimeout(t *testing.T)   { testCtl(t, watchTest, withDialTimeout(0)) }
 
 func TestCtlV3WatchInteractive(t *testing.T) {
 	testCtl(t, watchTest, withInteractive())
 }
 func TestCtlV3WatchInteractiveNoTLS(t *testing.T) {
-	testCtl(t, watchTest, withInteractive(), withCfg(configNoTLS))
+	testCtl(t, watchTest, withInteractive(), withCfg(*newConfigNoTLS()))
 }
 func TestCtlV3WatchInteractiveClientTLS(t *testing.T) {
-	testCtl(t, watchTest, withInteractive(), withCfg(configClientTLS))
+	testCtl(t, watchTest, withInteractive(), withCfg(*newConfigClientTLS()))
 }
 func TestCtlV3WatchInteractivePeerTLS(t *testing.T) {
-	testCtl(t, watchTest, withInteractive(), withCfg(configPeerTLS))
+	testCtl(t, watchTest, withInteractive(), withCfg(*newConfigPeerTLS()))
 }
 
 func watchTest(cx ctlCtx) {

@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/client/v3"
 )
 
 func TestCtlV3Alarm(t *testing.T) {
@@ -53,7 +53,7 @@ func alarmTest(cx ctlCtx) {
 	}
 
 	// '/health' handler should return 'false'
-	if err := cURLGet(cx.epc, cURLReq{endpoint: "/health", expected: `{"health":"false"}`}); err != nil {
+	if err := cURLGet(cx.epc, cURLReq{endpoint: "/health", expected: `{"health":"false","reason":"ALARM NOSPACE"}`}); err != nil {
 		cx.t.Fatalf("failed get with curl (%v)", err)
 	}
 
@@ -84,7 +84,7 @@ func alarmTest(cx ctlCtx) {
 	if err := ctlV3Compact(cx, sresp.Header.Revision, true); err != nil {
 		cx.t.Fatal(err)
 	}
-	if err := ctlV3Defrag(cx); err != nil {
+	if err := ctlV3OnlineDefrag(cx); err != nil {
 		cx.t.Fatal(err)
 	}
 
