@@ -44,6 +44,7 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/etcdhttp"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/membership"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/rafthttp"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/v2http"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/v3client"
@@ -158,6 +159,7 @@ type ClusterConfig struct {
 	LeaseCheckpointInterval time.Duration
 
 	WatchProgressNotifyInterval time.Duration
+	ExperimentalMaxLearners     int
 }
 
 type cluster struct {
@@ -316,6 +318,7 @@ func (c *cluster) mustNewMember(t testutil.TB) *member {
 			enableLeaseCheckpoint:       c.cfg.EnableLeaseCheckpoint,
 			leaseCheckpointInterval:     c.cfg.LeaseCheckpointInterval,
 			WatchProgressNotifyInterval: c.cfg.WatchProgressNotifyInterval,
+			ExperimentalMaxLearners:     c.cfg.ExperimentalMaxLearners,
 		})
 	m.DiscoveryURL = c.cfg.DiscoveryURL
 	if c.cfg.UseGRPC {
@@ -608,6 +611,7 @@ type memberConfig struct {
 	enableLeaseCheckpoint       bool
 	leaseCheckpointInterval     time.Duration
 	WatchProgressNotifyInterval time.Duration
+	ExperimentalMaxLearners     int
 }
 
 // mustNewMember return an inited member with the given name. If peerTLS is
@@ -705,7 +709,10 @@ func mustNewMember(t testutil.TB, mcfg memberConfig) *member {
 
 	m.InitialCorruptCheck = true
 	m.WarningApplyDuration = embed.DefaultWarningApplyDuration
-
+	m.ExperimentalMaxLearners = membership.DefaultMaxLearners
+	if mcfg.ExperimentalMaxLearners != 0 {
+		m.ExperimentalMaxLearners = mcfg.ExperimentalMaxLearners
+	}
 	m.V2Deprecation = config.V2_DEPR_DEFAULT
 
 	m.Logger = memberLogger(t, mcfg.name)
