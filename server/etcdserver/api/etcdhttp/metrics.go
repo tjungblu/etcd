@@ -25,6 +25,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/raft/v3"
+	"go.etcd.io/etcd/server/v3/auth"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.uber.org/zap"
 )
@@ -137,8 +138,7 @@ func checkHealth(lg *zap.Logger, srv etcdserver.ServerV2, excludedAlarms AlarmSe
 		for _, v := range as {
 			alarmName := v.Alarm.String()
 			if _, found := excludedAlarms[alarmName]; found {
-				lg.Debug("/health excluded alarm", zap.String("alarm", alarmName))
-				delete(excludedAlarms, alarmName)
+				lg.Debug("/health excluded alarm", zap.String("alarm", v.String()))
 				continue
 			}
 
@@ -154,10 +154,6 @@ func checkHealth(lg *zap.Logger, srv etcdserver.ServerV2, excludedAlarms AlarmSe
 			lg.Warn("serving /health false due to an alarm", zap.String("alarm", v.String()))
 			return h
 		}
-	}
-
-	if len(excludedAlarms) > 0 {
-		lg.Warn("fail exclude alarms from health check", zap.String("exclude alarms", fmt.Sprintf("%+v", excludedAlarms)))
 	}
 
 	if uint64(srv.Leader()) == raft.None {
@@ -193,7 +189,7 @@ func checkV3Health(lg *zap.Logger, srv *etcdserver.EtcdServer, excludedAlarms Al
 	ctx, cancel := context.WithTimeout(context.Background(), srv.Cfg.ReqTimeout())
 	_, err := srv.Range(ctx, &etcdserverpb.RangeRequest{KeysOnly: true, Limit: 1})
 	cancel()
-	if err != nil {
+	if err != nil && err != auth.ErrUserEmpty && err != auth.ErrPermissionDenied {
 		h.Health = "false"
 		h.Reason = fmt.Sprintf("RANGE ERROR:%s", err)
 		lg.Warn("serving /health false; Range fails", zap.Error(err))
