@@ -16,7 +16,9 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -138,6 +140,91 @@ func TestV3LeaseGrantByID(t *testing.T) {
 	}
 	if lresp.ID != 2 {
 		t.Errorf("got id %v, wanted id %v", lresp.ID, 2)
+	}
+}
+
+// TestV3LeaseNegativeID ensures restarted member lessor can recover negative leaseID from backend.
+//
+// When the negative leaseID is used for lease revoke, all etcd nodes will remove the lease
+// and delete associated keys to ensure kv store data consistency
+//
+// It ensures issue 12535 is fixed by PR 13676
+func TestV3LeaseNegativeID(t *testing.T) {
+	tcs := []struct {
+		leaseID int64
+		k       []byte
+		v       []byte
+	}{
+		{
+			leaseID: -1, // int64 -1 is 2^64 -1 in uint64
+			k:       []byte("foo"),
+			v:       []byte("bar"),
+		},
+		{
+			leaseID: math.MaxInt64,
+			k:       []byte("bar"),
+			v:       []byte("foo"),
+		},
+		{
+			leaseID: math.MinInt64,
+			k:       []byte("hello"),
+			v:       []byte("world"),
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(fmt.Sprintf("test with lease ID %16x", tc.leaseID), func(t *testing.T) {
+			BeforeTest(t)
+			clus := NewClusterV3(t, &ClusterConfig{Size: 3})
+			defer clus.Terminate(t)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cc := clus.RandClient()
+			lresp, err := toGRPC(cc).Lease.LeaseGrant(ctx, &pb.LeaseGrantRequest{ID: tc.leaseID, TTL: 300})
+			if err != nil {
+				t.Errorf("could not create lease %d (%v)", tc.leaseID, err)
+			}
+			if lresp.ID != tc.leaseID {
+				t.Errorf("got id %v, wanted id %v", lresp.ID, tc.leaseID)
+			}
+			putr := &pb.PutRequest{Key: tc.k, Value: tc.v, Lease: tc.leaseID}
+			_, err = toGRPC(cc).KV.Put(ctx, putr)
+			if err != nil {
+				t.Errorf("couldn't put key (%v)", err)
+			}
+
+			// wait for backend Commit
+			time.Sleep(100 * time.Millisecond)
+			// restore lessor from db file
+			clus.Members[2].Stop(t)
+			if err := clus.Members[2].Restart(t); err != nil {
+				t.Fatal(err)
+			}
+
+			// revoke lease should remove key
+			WaitClientV3(t, clus.Client(2))
+			_, err = toGRPC(clus.RandClient()).Lease.LeaseRevoke(ctx, &pb.LeaseRevokeRequest{ID: tc.leaseID})
+			if err != nil {
+				t.Errorf("could not revoke lease %d (%v)", tc.leaseID, err)
+			}
+			var revision int64
+			for i := range clus.Members {
+				getr := &pb.RangeRequest{Key: tc.k}
+				getresp, err := toGRPC(clus.Client(i)).KV.Range(ctx, getr)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if revision == 0 {
+					revision = getresp.Header.Revision
+				}
+				if revision != getresp.Header.Revision {
+					t.Errorf("expect revision %d, but got %d", revision, getresp.Header.Revision)
+				}
+				if len(getresp.Kvs) != 0 {
+					t.Errorf("lease removed but key remains")
+				}
+			}
+		})
 	}
 }
 
@@ -412,17 +499,31 @@ func TestV3LeaseLeases(t *testing.T) {
 // it was oberserved that the immediate lease renewal after granting a lease from follower resulted lease not found.
 // related issue https://github.com/etcd-io/etcd/issues/6978
 func TestV3LeaseRenewStress(t *testing.T) {
-	testLeaseStress(t, stressLeaseRenew)
+	testLeaseStress(t, stressLeaseRenew, false)
+}
+
+// TestV3LeaseRenewStressWithClusterClient is similar to TestV3LeaseRenewStress,
+// but it uses a cluster client instead of a specific member's client.
+// The related issue is https://github.com/etcd-io/etcd/issues/13675.
+func TestV3LeaseRenewStressWithClusterClient(t *testing.T) {
+	testLeaseStress(t, stressLeaseRenew, true)
 }
 
 // TestV3LeaseTimeToLiveStress keeps creating lease and retrieving it immediately to ensure the lease can be retrieved.
 // it was oberserved that the immediate lease retrieval after granting a lease from follower resulted lease not found.
 // related issue https://github.com/etcd-io/etcd/issues/6978
 func TestV3LeaseTimeToLiveStress(t *testing.T) {
-	testLeaseStress(t, stressLeaseTimeToLive)
+	testLeaseStress(t, stressLeaseTimeToLive, false)
 }
 
-func testLeaseStress(t *testing.T, stresser func(context.Context, pb.LeaseClient) error) {
+// TestV3LeaseTimeToLiveStressWithClusterClient is similar to TestV3LeaseTimeToLiveStress,
+// but it uses a cluster client instead of a specific member's client.
+// The related issue is https://github.com/etcd-io/etcd/issues/13675.
+func TestV3LeaseTimeToLiveStressWithClusterClient(t *testing.T) {
+	testLeaseStress(t, stressLeaseTimeToLive, true)
+}
+
+func testLeaseStress(t *testing.T, stresser func(context.Context, pb.LeaseClient) error, useClusterClient bool) {
 	BeforeTest(t)
 	clus := NewClusterV3(t, &ClusterConfig{Size: 3})
 	defer clus.Terminate(t)
@@ -431,13 +532,23 @@ func testLeaseStress(t *testing.T, stresser func(context.Context, pb.LeaseClient
 	defer cancel()
 	errc := make(chan error)
 
-	for i := 0; i < 30; i++ {
-		for j := 0; j < 3; j++ {
-			go func(i int) { errc <- stresser(ctx, toGRPC(clus.Client(i)).Lease) }(j)
+	if useClusterClient {
+		for i := 0; i < 300; i++ {
+			clusterClient, err := clus.ClusterClient()
+			if err != nil {
+				t.Fatal(err)
+			}
+			go func(i int) { errc <- stresser(ctx, toGRPC(clusterClient).Lease) }(i)
+		}
+	} else {
+		for i := 0; i < 100; i++ {
+			for j := 0; j < 3; j++ {
+				go func(i int) { errc <- stresser(ctx, toGRPC(clus.Client(i)).Lease) }(j)
+			}
 		}
 	}
 
-	for i := 0; i < 90; i++ {
+	for i := 0; i < 300; i++ {
 		if err := <-errc; err != nil {
 			t.Fatal(err)
 		}
@@ -468,7 +579,7 @@ func stressLeaseRenew(tctx context.Context, lc pb.LeaseClient) (reterr error) {
 			continue
 		}
 		if rresp.TTL == 0 {
-			return fmt.Errorf("TTL shouldn't be 0 so soon")
+			return errors.New("TTL shouldn't be 0 so soon")
 		}
 	}
 	return nil
