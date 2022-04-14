@@ -172,6 +172,7 @@ type ClusterConfig struct {
 
 	WatchProgressNotifyInterval time.Duration
 	ExperimentalMaxLearners     int
+	CorruptCheckTime            time.Duration
 }
 
 type cluster struct {
@@ -335,6 +336,7 @@ func (c *cluster) mustNewMember(t testutil.TB, memberNumber int64) *member {
 			leaseCheckpointInterval:     c.cfg.LeaseCheckpointInterval,
 			WatchProgressNotifyInterval: c.cfg.WatchProgressNotifyInterval,
 			ExperimentalMaxLearners:     c.cfg.ExperimentalMaxLearners,
+			CorruptCheckTime:            c.cfg.CorruptCheckTime,
 		})
 	m.DiscoveryURL = c.cfg.DiscoveryURL
 	if c.cfg.UseGRPC {
@@ -639,6 +641,7 @@ type memberConfig struct {
 	leaseCheckpointPersist      bool
 	WatchProgressNotifyInterval time.Duration
 	ExperimentalMaxLearners     int
+	CorruptCheckTime            time.Duration
 }
 
 // mustNewMember return an inited member with the given name. If peerTLS is
@@ -741,6 +744,9 @@ func mustNewMember(t testutil.TB, mcfg memberConfig) *member {
 	m.WatchProgressNotifyInterval = mcfg.WatchProgressNotifyInterval
 
 	m.InitialCorruptCheck = true
+	if mcfg.CorruptCheckTime > time.Duration(0) {
+		m.CorruptCheckTime = mcfg.CorruptCheckTime
+	}
 	m.WarningApplyDuration = embed.DefaultWarningApplyDuration
 	m.ExperimentalMaxLearners = membership.DefaultMaxLearners
 	if mcfg.ExperimentalMaxLearners != 0 {
@@ -1455,7 +1461,7 @@ func (c *ClusterV3) Client(i int) *clientv3.Client {
 
 func (c *ClusterV3) ClusterClient() (client *clientv3.Client, err error) {
 	if c.clusterClient == nil {
-		endpoints := []string{}
+		var endpoints []string
 		for _, m := range c.Members {
 			endpoints = append(endpoints, m.grpcURL)
 		}

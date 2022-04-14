@@ -871,6 +871,8 @@ type fakeBatchTx struct {
 	rangeRespc chan rangeResp
 }
 
+func (b *fakeBatchTx) LockInsideApply()                         {}
+func (b *fakeBatchTx) LockOutsideApply()                        {}
 func (b *fakeBatchTx) Lock()                                    {}
 func (b *fakeBatchTx) Unlock()                                  {}
 func (b *fakeBatchTx) RLock()                                   {}
@@ -912,6 +914,7 @@ func (b *fakeBackend) Snapshot() backend.Snapshot                               
 func (b *fakeBackend) ForceCommit()                                               {}
 func (b *fakeBackend) Defrag() error                                              { return nil }
 func (b *fakeBackend) Close() error                                               { return nil }
+func (b *fakeBackend) SetTxPostLockInsideApplyHook(func())                        {}
 
 type indexGetResp struct {
 	rev     revision
