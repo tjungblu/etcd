@@ -168,7 +168,7 @@ func (o *DiscoverEtcdInitialClusterOptions) Run() error {
 		// If member is not yet part of the cluster print to stderr and retry.
 		if err != nil && !memberFound {
 			fmt.Fprintf(os.Stderr, "      %s\n#### sleeping...\n", err.Error())
-			time.Sleep(1 * time.Second)
+			time.Sleep(18 * time.Second)
 			continue
 		}
 		// Empty string value for initialCluster is valid.
