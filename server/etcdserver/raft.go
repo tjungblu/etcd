@@ -532,7 +532,7 @@ func restartNode(cfg config.ServerConfig, snapshot *raftpb.Snapshot) (types.ID, 
 		zap.String("local-member-id", id.String()),
 		zap.Uint64("commit-index", st.Commit),
 	)
-	cl := membership.NewCluster(cfg.Logger)
+	cl := membership.NewCluster(cfg.Logger, membership.WithMaxLearners(cfg.ExperimentalMaxLearners))
 	cl.SetID(id, cid)
 	s := raft.NewMemoryStorage()
 	if snapshot != nil {
@@ -606,7 +606,7 @@ func restartAsStandaloneNode(cfg config.ServerConfig, snapshot *raftpb.Snapshot)
 		zap.Uint64("commit-index", st.Commit),
 	)
 
-	cl := membership.NewCluster(cfg.Logger)
+	cl := membership.NewCluster(cfg.Logger, membership.WithMaxLearners(cfg.ExperimentalMaxLearners))
 	cl.SetID(id, cid)
 	s := raft.NewMemoryStorage()
 	if snapshot != nil {
