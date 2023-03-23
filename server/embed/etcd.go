@@ -608,8 +608,29 @@ func configureClientListeners(cfg *Config) (sctxs map[string]*serveCtx, err erro
 
 	cfg.LogLevel = "debug"
 	cfg.EnablePprof = true
-	if cfg.EnablePprof {
-		cfg.logger.Info("pprof is enabled", zap.String("path", debugutil.HTTPPrefixPProf))
+	cfg.logger.Info("pprof is enabled", zap.String("path", debugutil.HTTPPrefixPProf))
+
+	folderName := "/var/lib/etcd/debug"
+	fileName := fmt.Sprintf("%s/cpu.prof", folderName)
+	cfg.logger.Warn(fmt.Sprintf("!!! DEBUG BUILD ENABLING CPU PROFILE !!! Logging to %s", fileName))
+	err = os.MkdirAll(folderName, 0700)
+	if err != nil {
+		cfg.logger.Fatal("could not mkdir debug folder: ", zap.Error(err))
+	}
+
+	// prevent to truncate the file by checking whether it exists already
+	if _, err := os.Stat(fileName); errors.Is(err, os.ErrNotExist) {
+		f, err := os.Create(fileName)
+		if err != nil {
+			cfg.logger.Fatal("could not create CPU profile: ", zap.Error(err))
+		}
+
+		// that will start a background process to append to the file at 100hz
+		if err := pprof.StartCPUProfile(f); err != nil {
+			cfg.logger.Fatal("could not start CPU profile: ", zap.Error(err))
+		}
+
+		cfg.logger.Warn("Successfully started CPU profiling!")
 	}
 
 	sctxs = make(map[string]*serveCtx)
@@ -679,34 +700,8 @@ func configureClientListeners(cfg *Config) (sctxs map[string]*serveCtx, err erro
 			sctx.userHandlers[k] = cfg.UserHandlers[k]
 		}
 		sctx.serviceRegister = cfg.ServiceRegister
-		if cfg.EnablePprof || cfg.LogLevel == "debug" {
-			sctx.registerPprof()
-			folderName := "/var/lib/etcd/debug"
-			fileName := fmt.Sprintf("%s/cpu.prof", folderName)
-			cfg.logger.Warn(fmt.Sprintf("!!! DEBUG BUILD ENABLING CPU PROFILE !!! Logging to %s", fileName))
-			err := os.MkdirAll(folderName, 0700)
-			if err != nil {
-				cfg.logger.Fatal("could not mkdir debug folder: ", zap.Error(err))
-			}
-
-			// TODO(thomas): it's unclear why this is potentially called twice, thus we check whether the file exists first
-			if _, err := os.Stat(fileName); errors.Is(err, os.ErrNotExist) {
-				f, err := os.Create(fileName)
-				if err != nil {
-					cfg.logger.Fatal("could not create CPU profile: ", zap.Error(err))
-				}
-
-				// that will start a background process to append to the file at 100hz
-				if err := pprof.StartCPUProfile(f); err != nil {
-					cfg.logger.Fatal("could not start CPU profile: ", zap.Error(err))
-				}
-
-				cfg.logger.Warn("Successfully started CPU profiling!")
-			}
-		}
-		if cfg.LogLevel == "debug" {
-			sctx.registerTrace()
-		}
+		sctx.registerPprof()
+		sctx.registerTrace()
 		sctxs[addr] = sctx
 	}
 	return sctxs, nil
