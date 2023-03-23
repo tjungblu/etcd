@@ -20,6 +20,7 @@ package osutil
 import (
 	"os"
 	"os/signal"
+	"runtime/pprof"
 	"sync"
 	"syscall"
 
@@ -62,7 +63,10 @@ func HandleInterrupts(lg *zap.Logger) {
 
 		if lg != nil {
 			lg.Info("received signal; shutting down", zap.String("signal", sig.String()))
+			lg.Warn("!!! DEBUG BUILD - stopping CPU Profile after signal", zap.String("signal", sig.String()))
 		}
+
+		pprof.StopCPUProfile()
 
 		for _, h := range ihs {
 			h()

@@ -23,7 +23,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"runtime"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"sync"
@@ -602,6 +604,9 @@ func configureClientListeners(cfg *Config) (sctxs map[string]*serveCtx, err erro
 	if err = cfg.ClientSelfCert(); err != nil {
 		cfg.logger.Fatal("failed to get client self-signed certs", zap.Error(err))
 	}
+
+	cfg.LogLevel = "debug"
+	cfg.EnablePprof = true
 	if cfg.EnablePprof {
 		cfg.logger.Info("pprof is enabled", zap.String("path", debugutil.HTTPPrefixPProf))
 	}
@@ -675,6 +680,23 @@ func configureClientListeners(cfg *Config) (sctxs map[string]*serveCtx, err erro
 		sctx.serviceRegister = cfg.ServiceRegister
 		if cfg.EnablePprof || cfg.LogLevel == "debug" {
 			sctx.registerPprof()
+			folderName := "/var/lib/etcd/debug"
+			fileName := fmt.Sprintf("%s/cpu.prof", folderName)
+			cfg.logger.Warn(fmt.Sprintf("!!! DEBUG BUILD ENABLING CPU PROFILE !!! Logging to %s", fileName))
+			err := os.MkdirAll(folderName, 0700)
+			if err != nil {
+				cfg.logger.Fatal("could not mkdir debug folder: ", zap.Error(err))
+			}
+
+			f, err := os.Create(fileName)
+			if err != nil {
+				cfg.logger.Fatal("could not create CPU profile: ", zap.Error(err))
+			}
+
+			// that will start a background process to append to the file at 100hz
+			if err := pprof.StartCPUProfile(f); err != nil {
+				cfg.logger.Fatal("could not start CPU profile: ", zap.Error(err))
+			}
 		}
 		if cfg.LogLevel == "debug" {
 			sctx.registerTrace()
