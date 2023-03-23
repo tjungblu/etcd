@@ -17,6 +17,7 @@ package embed
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	defaultLog "log"
@@ -688,14 +689,19 @@ func configureClientListeners(cfg *Config) (sctxs map[string]*serveCtx, err erro
 				cfg.logger.Fatal("could not mkdir debug folder: ", zap.Error(err))
 			}
 
-			f, err := os.Create(fileName)
-			if err != nil {
-				cfg.logger.Fatal("could not create CPU profile: ", zap.Error(err))
-			}
+			// TODO(thomas): it's unclear why this is potentially called twice, thus we check whether the file exists first
+			if _, err := os.Stat(fileName); errors.Is(err, os.ErrNotExist) {
+				f, err := os.Create(fileName)
+				if err != nil {
+					cfg.logger.Fatal("could not create CPU profile: ", zap.Error(err))
+				}
 
-			// that will start a background process to append to the file at 100hz
-			if err := pprof.StartCPUProfile(f); err != nil {
-				cfg.logger.Fatal("could not start CPU profile: ", zap.Error(err))
+				// that will start a background process to append to the file at 100hz
+				if err := pprof.StartCPUProfile(f); err != nil {
+					cfg.logger.Fatal("could not start CPU profile: ", zap.Error(err))
+				}
+
+				cfg.logger.Warn("Successfully started CPU profiling!")
 			}
 		}
 		if cfg.LogLevel == "debug" {
