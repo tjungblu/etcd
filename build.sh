@@ -9,6 +9,8 @@ if [[ -n "$FAILPOINTS" ]]; then
   GIT_SHA="$GIT_SHA"-FAILPOINTS
 fi
 
+# dummy change to run configmap test
+
 VERSION_SYMBOL="${ROOT_MODULE}/api/v3/version.GitSHA"
 
 # Set GO_LDFLAGS="-s" for building without symbols for debugging.
