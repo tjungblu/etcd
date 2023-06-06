@@ -18,18 +18,18 @@ import (
 	"context"
 )
 
-type tokenNop struct{}
+type TokenNop struct{}
 
-func (t *tokenNop) enable()                         {}
-func (t *tokenNop) disable()                        {}
-func (t *tokenNop) invalidateUser(string)           {}
-func (t *tokenNop) genTokenPrefix() (string, error) { return "", nil }
-func (t *tokenNop) info(ctx context.Context, token string, rev uint64) (*AuthInfo, bool) {
+func (t *TokenNop) enable()                         {}
+func (t *TokenNop) disable()                        {}
+func (t *TokenNop) invalidateUser(string)           {}
+func (t *TokenNop) genTokenPrefix() (string, error) { return "", nil }
+func (t *TokenNop) info(ctx context.Context, token string, rev uint64) (*AuthInfo, bool) {
 	return nil, false
 }
-func (t *tokenNop) assign(ctx context.Context, username string, revision uint64) (string, error) {
+func (t *TokenNop) assign(ctx context.Context, username string, revision uint64) (string, error) {
 	return "", ErrAuthFailed
 }
-func newTokenProviderNop() (*tokenNop, error) {
-	return &tokenNop{}, nil
+func newTokenProviderNop() (*TokenNop, error) {
+	return &TokenNop{}, nil
 }

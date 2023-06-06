@@ -14,7 +14,38 @@
 
 package auth
 
-import "go.etcd.io/etcd/api/v3/authpb"
+import (
+	"encoding/base64"
+
+	"go.etcd.io/etcd/api/v3/authpb"
+	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
+	"golang.org/x/crypto/bcrypt"
+)
+
+func encodePassword(s string) string {
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(s), bcrypt.MinCost)
+	return base64.StdEncoding.EncodeToString(hashedPassword)
+}
+
+// TestEnableAuthAndCreateRoot should be used for testing only.
+func TestEnableAuthAndCreateRoot(as AuthStore) error {
+	_, err := as.UserAdd(&pb.AuthUserAddRequest{Name: "root", HashedPassword: encodePassword("root"), Options: &authpb.UserAddOptions{NoPassword: false}})
+	if err != nil {
+		return err
+	}
+
+	_, err = as.RoleAdd(&pb.AuthRoleAddRequest{Name: "root"})
+	if err != nil {
+		return err
+	}
+
+	_, err = as.UserGrantRole(&pb.AuthUserGrantRoleRequest{User: "root", Role: "root"})
+	if err != nil {
+		return err
+	}
+
+	return as.AuthEnable()
+}
 
 type backendMock struct {
 	users    map[string]*authpb.User
@@ -23,7 +54,8 @@ type backendMock struct {
 	revision uint64
 }
 
-func newBackendMock() *backendMock {
+// NewBackendMock should be used for testing only.
+func NewBackendMock() AuthBackend {
 	return &backendMock{
 		users: make(map[string]*authpb.User),
 		roles: make(map[string]*authpb.Role),

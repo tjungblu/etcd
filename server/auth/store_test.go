@@ -16,7 +16,6 @@ package auth
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -51,9 +50,9 @@ func TestNewAuthStoreRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	be := newBackendMock()
+	be := NewBackendMock()
 	as := NewAuthStore(zaptest.NewLogger(t), be, tp, bcrypt.MinCost)
-	err = enableAuthAndCreateRoot(as)
+	err = TestEnableAuthAndCreateRoot(as)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +78,7 @@ func TestNewAuthStoreBcryptCost(t *testing.T) {
 
 	invalidCosts := [2]int{bcrypt.MinCost - 1, bcrypt.MaxCost + 1}
 	for _, invalidCost := range invalidCosts {
-		as := NewAuthStore(zaptest.NewLogger(t), newBackendMock(), tp, invalidCost)
+		as := NewAuthStore(zaptest.NewLogger(t), NewBackendMock(), tp, invalidCost)
 		defer as.Close()
 		if as.BcryptCost() != bcrypt.DefaultCost {
 			t.Fatalf("expected DefaultCost when bcryptcost is invalid")
@@ -87,18 +86,13 @@ func TestNewAuthStoreBcryptCost(t *testing.T) {
 	}
 }
 
-func encodePassword(s string) string {
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(s), bcrypt.MinCost)
-	return base64.StdEncoding.EncodeToString(hashedPassword)
-}
-
 func setupAuthStore(t *testing.T) (store *authStore, teardownfunc func(t *testing.T)) {
 	tp, err := NewTokenProvider(zaptest.NewLogger(t), tokenTypeSimple, dummyIndexWaiter, simpleTokenTTLDefault)
 	if err != nil {
 		t.Fatal(err)
 	}
-	as := NewAuthStore(zaptest.NewLogger(t), newBackendMock(), tp, bcrypt.MinCost)
-	err = enableAuthAndCreateRoot(as)
+	as := NewAuthStore(zaptest.NewLogger(t), NewBackendMock(), tp, bcrypt.MinCost)
+	err = TestEnableAuthAndCreateRoot(as)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,25 +129,6 @@ func addUserWithNoOption(as *authStore) {
 	})
 	as.commitRevision(tx)
 	as.refreshRangePermCache(tx)
-}
-
-func enableAuthAndCreateRoot(as *authStore) error {
-	_, err := as.UserAdd(&pb.AuthUserAddRequest{Name: "root", HashedPassword: encodePassword("root"), Options: &authpb.UserAddOptions{NoPassword: false}})
-	if err != nil {
-		return err
-	}
-
-	_, err = as.RoleAdd(&pb.AuthRoleAddRequest{Name: "root"})
-	if err != nil {
-		return err
-	}
-
-	_, err = as.UserGrantRole(&pb.AuthUserGrantRoleRequest{User: "root", Role: "root"})
-	if err != nil {
-		return err
-	}
-
-	return as.AuthEnable()
 }
 
 func TestUserAdd(t *testing.T) {
@@ -957,7 +932,7 @@ func TestAuthInfoFromCtxRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as := NewAuthStore(zaptest.NewLogger(t), newBackendMock(), tp, bcrypt.MinCost)
+	as := NewAuthStore(zaptest.NewLogger(t), NewBackendMock(), tp, bcrypt.MinCost)
 	defer as.Close()
 
 	donec := make(chan struct{})
@@ -1108,9 +1083,9 @@ func TestRolesOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as := NewAuthStore(zaptest.NewLogger(t), newBackendMock(), tp, bcrypt.MinCost)
+	as := NewAuthStore(zaptest.NewLogger(t), NewBackendMock(), tp, bcrypt.MinCost)
 	defer as.Close()
-	err = enableAuthAndCreateRoot(as)
+	err = TestEnableAuthAndCreateRoot(as)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1161,10 +1136,10 @@ func testAuthInfoFromCtxWithRoot(t *testing.T, opts string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as := NewAuthStore(zaptest.NewLogger(t), newBackendMock(), tp, bcrypt.MinCost)
+	as := NewAuthStore(zaptest.NewLogger(t), NewBackendMock(), tp, bcrypt.MinCost)
 	defer as.Close()
 
-	if err = enableAuthAndCreateRoot(as); err != nil {
+	if err = TestEnableAuthAndCreateRoot(as); err != nil {
 		t.Fatal(err)
 	}
 
