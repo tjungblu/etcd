@@ -41,6 +41,7 @@ import (
 	"go.etcd.io/etcd/server/v3/etcdserver/api/v2store"
 	"go.etcd.io/etcd/server/v3/etcdserver/cindex"
 	"go.etcd.io/etcd/server/v3/storage/backend"
+	"go.etcd.io/etcd/server/v3/storage/mvcc"
 	"go.etcd.io/etcd/server/v3/storage/schema"
 	"go.etcd.io/etcd/server/v3/storage/wal"
 	"go.etcd.io/etcd/server/v3/storage/wal/walpb"
@@ -203,6 +204,14 @@ type RestoreConfig struct {
 	// SkipHashCheck is "true" to ignore snapshot integrity hash value
 	// (required if copied from data directory).
 	SkipHashCheck bool
+
+	// RevisionBump is the amount to increase the latest revision after restore,
+	// to allow administrators to trick clients into thinking that revision never decreased.
+	// If 0, revision bumping is skipped.
+	RevisionBump int64
+
+	// MarkCompacted is "true" to mark the latest revision as compacted.
+	MarkCompacted bool
 }
 
 // Restore restores a new etcd data directory from given snapshot file.
@@ -265,6 +274,13 @@ func (s *v3Manager) Restore(cfg RestoreConfig) error {
 	if err = s.saveDB(); err != nil {
 		return err
 	}
+
+	if cfg.MarkCompacted || cfg.RevisionBump > 0 {
+		if err = s.maybeModifyLatestRevision(cfg.MarkCompacted, cfg.RevisionBump); err != nil {
+			return err
+		}
+	}
+
 	hardstate, err := s.saveWALAndSnap()
 	if err != nil {
 		return err
@@ -309,6 +325,73 @@ func (s *v3Manager) saveDB() error {
 	}
 
 	return nil
+}
+
+// maybeModifyLatestRevision can increase the latest revision by the given amount and sets the scheduled compaction
+// to that revision so that the server will compact the database up to that revision.
+func (s *v3Manager) maybeModifyLatestRevision(markCompacted bool, bumpAmount int64) error {
+	be := backend.NewDefaultBackend(s.lg, s.outDbPath())
+	defer be.Close()
+
+	tx := be.BatchTx()
+	tx.LockOutsideApply()
+	defer tx.Unlock()
+
+	latest, err := s.unsafeGetLatestRevision(tx)
+	if err != nil {
+		return err
+	}
+
+	if bumpAmount > 0 {
+		latest = s.unsafeBumpRevision(tx, latest, bumpAmount)
+	}
+
+	if markCompacted {
+		s.unsafeMarkRevisionCompacted(tx, latest)
+	}
+
+	be.ForceCommit()
+
+	return nil
+}
+
+func (s *v3Manager) unsafeBumpRevision(tx backend.BatchTx, latest revision, amount int64) revision {
+	s.lg.Info(
+		"bumping latest revision",
+		zap.Int64("latest-revision", latest.main),
+		zap.Int64("bump-amount", amount),
+		zap.Int64("new-latest-revision", latest.main+amount),
+	)
+
+	latest.main += amount
+	k := [17]byte{}
+	revToBytes(k[:], latest)
+	tx.UnsafePut(schema.Key, k[:], []byte{})
+
+	return latest
+}
+
+func (s *v3Manager) unsafeMarkRevisionCompacted(tx backend.BatchTx, latest revision) {
+	s.lg.Info(
+		"marking revision compacted",
+		zap.Int64("revision", latest.main),
+	)
+
+	mvcc.UnsafeSetScheduledCompact(tx, latest.main)
+}
+
+func (s *v3Manager) unsafeGetLatestRevision(tx backend.BatchTx) (revision, error) {
+	var latest revision
+	err := tx.UnsafeForEach(schema.Key, func(k, _ []byte) (err error) {
+		rev := bytesToRev(k)
+
+		if latest.main < rev.main {
+			latest = rev
+		}
+
+		return nil
+	})
+	return latest, err
 }
 
 func (s *v3Manager) copyAndVerifyDB() error {

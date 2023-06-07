@@ -20,12 +20,24 @@ import (
 
 type revision struct {
 	main int64
+	sep  byte
 	sub  int64
 }
 
+// bytesToRev should be synced with function in server
+// https://github.com/etcd-io/etcd/blob/main/server/storage/mvcc/revision.go
 func bytesToRev(bytes []byte) revision {
 	return revision{
 		main: int64(binary.BigEndian.Uint64(bytes[0:8])),
+		sep:  bytes[8],
 		sub:  int64(binary.BigEndian.Uint64(bytes[9:])),
 	}
+}
+
+// revToBytes should be synced with function in server
+// https://github.com/etcd-io/etcd/blob/main/server/storage/mvcc/revision.go
+func revToBytes(bytes []byte, rev revision) {
+	binary.BigEndian.PutUint64(bytes[0:8], uint64(rev.main))
+	bytes[8] = rev.sep
+	binary.BigEndian.PutUint64(bytes[9:], uint64(rev.sub))
 }

@@ -38,6 +38,8 @@ var (
 	restorePeerURLs     string
 	restoreName         string
 	skipHashCheck       bool
+	markCompacted       bool
+	revisionBump        int64
 )
 
 // NewSnapshotCommand returns the cobra command for "snapshot".
@@ -75,6 +77,8 @@ func NewSnapshotRestoreCommand() *cobra.Command {
 	cmd.Flags().StringVar(&restorePeerURLs, "initial-advertise-peer-urls", defaultInitialAdvertisePeerURLs, "List of this member's peer URLs to advertise to the rest of the cluster")
 	cmd.Flags().StringVar(&restoreName, "name", defaultName, "Human-readable name for this member")
 	cmd.Flags().BoolVar(&skipHashCheck, "skip-hash-check", false, "Ignore snapshot integrity hash value (required if copied from data directory)")
+	cmd.Flags().Int64Var(&revisionBump, "bump-revision", 0, "How much to increase the latest revision after restore")
+	cmd.Flags().BoolVar(&markCompacted, "mark-compacted", false, "Mark the latest revision after restore as the point of scheduled compaction")
 
 	cmd.MarkFlagDirname("data-dir")
 	cmd.MarkFlagDirname("wal-dir")
@@ -100,7 +104,7 @@ func SnapshotStatusCommandFunc(cmd *cobra.Command, args []string) {
 
 func snapshotRestoreCommandFunc(_ *cobra.Command, args []string) {
 	SnapshotRestoreCommandFunc(restoreCluster, restoreClusterToken, restoreDataDir, restoreWalDir,
-		restorePeerURLs, restoreName, skipHashCheck, args)
+		restorePeerURLs, restoreName, skipHashCheck, revisionBump, markCompacted, args)
 }
 
 func SnapshotRestoreCommandFunc(restoreCluster string,
@@ -110,6 +114,8 @@ func SnapshotRestoreCommandFunc(restoreCluster string,
 	restorePeerURLs string,
 	restoreName string,
 	skipHashCheck bool,
+	revisionBump int64,
+	markCompacted bool,
 	args []string) {
 	if len(args) != 1 {
 		err := fmt.Errorf("snapshot restore requires exactly one argument")
@@ -138,6 +144,8 @@ func SnapshotRestoreCommandFunc(restoreCluster string,
 		InitialCluster:      restoreCluster,
 		InitialClusterToken: restoreClusterToken,
 		SkipHashCheck:       skipHashCheck,
+		RevisionBump:        revisionBump,
+		MarkCompacted:       markCompacted,
 	}); err != nil {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)
 	}
