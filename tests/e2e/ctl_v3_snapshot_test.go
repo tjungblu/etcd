@@ -26,10 +26,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
+	v3rpc "go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	"go.etcd.io/etcd/etcdutl/v3/snapshot"
 	"go.etcd.io/etcd/pkg/v3/expect"
+	"go.etcd.io/etcd/tests/v3/framework/config"
 	"go.etcd.io/etcd/tests/v3/framework/e2e"
+	"go.etcd.io/etcd/tests/v3/framework/testutils"
 )
 
 func TestCtlV3Snapshot(t *testing.T) { testCtl(t, snapshotTest) }
@@ -304,4 +306,124 @@ func snapshotVersionTest(cx ctlCtx) {
 	if st.Version != "3.6.0" {
 		cx.t.Fatalf("expected %q, got %q", "3.6.0", st.Version)
 	}
+}
+
+func TestRestoreCompactionRevBump(t *testing.T) {
+	e2e.BeforeTest(t)
+
+	epc, err := e2e.NewEtcdProcessCluster(context.TODO(), t,
+		e2e.WithClusterSize(1),
+		e2e.WithKeepDataDir(true),
+	)
+	if err != nil {
+		t.Fatalf("could not start etcd process cluster (%v)", err)
+	}
+	defer func() {
+		if errC := epc.Close(); errC != nil {
+			t.Fatalf("error closing etcd processes (%v)", errC)
+		}
+	}()
+
+	ctl := epc.Etcdctl()
+
+	watchCh := ctl.Watch(context.Background(), "foo", config.WatchOptions{Prefix: true, IncludeCancellationResponse: true})
+	kvs := []testutils.KV{{"foo1", "val1"}, {"foo2", "val2"}, {"foo3", "val3"}}
+	for i := range kvs {
+		require.NoError(t, ctl.Put(context.Background(), kvs[i].Key, kvs[i].Val, config.PutOptions{}))
+	}
+
+	watchTimeout := 1 * time.Second
+	watchRes, err := testutils.KeyValuesFromWatchChan(watchCh, len(kvs), watchTimeout)
+	require.NoErrorf(t, err, "failed to get key-values from watch channel %s", err)
+	require.Equal(t, kvs, watchRes)
+
+	// ensure we get the right revision back for each of the keys
+	currentRev := 4
+	baseRev := 2
+	for i := range kvs {
+		v, err := ctl.Get(context.Background(), kvs[i].Key, config.GetOptions{})
+		require.NoError(t, err)
+		require.Equal(t, int64(1), v.Count)
+		require.Equal(t, kvs[i].Val, string(v.Kvs[0].Value))
+		require.Equal(t, int64(baseRev+i), v.Kvs[0].CreateRevision)
+		require.Equal(t, int64(baseRev+i), v.Kvs[0].ModRevision)
+		require.Equal(t, int64(1), v.Kvs[0].Version)
+		require.Equal(t, int64(currentRev), v.Header.Revision)
+	}
+
+	fpath := filepath.Join(t.TempDir(), "test.snapshot")
+
+	t.Log("etcdctl saving snapshot...")
+	cmdPrefix := []string{e2e.BinPath.Etcdctl, "--endpoints", strings.Join(epc.EndpointsGRPC(), ",")}
+	require.NoError(t, e2e.SpawnWithExpects(append(cmdPrefix, "snapshot", "save", fpath), nil, fmt.Sprintf("Snapshot saved at %s", fpath)))
+
+	t.Log("Stopping the original server...")
+	require.NoError(t, epc.Stop())
+
+	newDataDir := filepath.Join(t.TempDir(), "test.data")
+	t.Log("etcdctl restoring the snapshot...")
+	bumpAmount := 10000
+	err = e2e.SpawnWithExpect([]string{
+		e2e.BinPath.Etcdutl,
+		"snapshot",
+		"restore", fpath,
+		"--name", epc.Procs[0].Config().Name,
+		"--initial-cluster", epc.Procs[0].Config().InitialCluster,
+		"--initial-cluster-token", epc.Procs[0].Config().InitialToken,
+		"--initial-advertise-peer-urls", epc.Procs[0].Config().PeerURL.String(),
+		"--bump-revision", fmt.Sprintf("%d", bumpAmount),
+		"--mark-compacted",
+		"--data-dir", newDataDir,
+	}, "added member")
+	require.NoError(t, err)
+
+	t.Log("(Re)starting the etcd member using the restored snapshot...")
+	epc.Procs[0].Config().DataDirPath = newDataDir
+	for i := range epc.Procs[0].Config().Args {
+		if epc.Procs[0].Config().Args[i] == "--data-dir" {
+			epc.Procs[0].Config().Args[i+1] = newDataDir
+		}
+	}
+
+	require.NoError(t, epc.Restart(context.Background()))
+
+	t.Log("Ensuring the restored member has the correct data...")
+	for i := range kvs {
+		v, err := ctl.Get(context.Background(), kvs[i].Key, config.GetOptions{})
+		require.NoError(t, err)
+		require.Equal(t, int64(1), v.Count)
+		require.Equal(t, kvs[i].Val, string(v.Kvs[0].Value))
+		// the currentRev we had before the snapshot should be bumped by now
+		require.Equal(t, int64(bumpAmount+currentRev), v.Header.Revision)
+		// the existing revisions and versions shouldn't be touched by the restore process
+		require.Equal(t, int64(baseRev+i), v.Kvs[0].CreateRevision)
+		require.Equal(t, int64(baseRev+i), v.Kvs[0].ModRevision)
+		require.Equal(t, int64(1), v.Kvs[0].Version)
+	}
+
+	cancelResult := <-watchCh
+	require.Equal(t, v3rpc.ErrCompacted, cancelResult.Err())
+	require.Truef(t, cancelResult.Canceled, "expected ongoing watch to be cancelled after restoring with --mark-compacted")
+	require.Equal(t, int64(bumpAmount+currentRev), cancelResult.CompactRevision)
+	_, ok := <-watchCh
+	require.False(t, ok, "watchChannel should be closed after restoring with --mark-compacted")
+
+	// clients might restart the watch at the old base revision, that should not yield any new data
+	// everything up until bumpAmount+currentRev should return "already compacted"
+	for i := bumpAmount - 2; i < bumpAmount+currentRev; i++ {
+		watchCh = ctl.Watch(context.Background(), "foo", config.WatchOptions{Prefix: true, Revision: int64(i), IncludeCancellationResponse: true})
+		cancelResult := <-watchCh
+		require.Equal(t, v3rpc.ErrCompacted, cancelResult.Err())
+		require.Truef(t, cancelResult.Canceled, "expected ongoing watch to be cancelled after restoring with --mark-compacted")
+		require.Equal(t, int64(bumpAmount+currentRev), cancelResult.CompactRevision)
+	}
+
+	// a watch after that revision should yield successful results when a new put arrives
+	ctx, cancel := context.WithTimeout(context.Background(), watchTimeout*5)
+	defer cancel()
+	watchCh = ctl.Watch(ctx, "foo", config.WatchOptions{Prefix: true, Revision: int64(bumpAmount + currentRev + 1)})
+	require.NoError(t, ctl.Put(context.Background(), "foo4", "val4", config.PutOptions{}))
+	watchRes, err = testutils.KeyValuesFromWatchChan(watchCh, 1, watchTimeout)
+	require.NoErrorf(t, err, "failed to get key-values from watch channel %s", err)
+	require.Equal(t, []testutils.KV{{"foo4", "val4"}}, watchRes)
 }
