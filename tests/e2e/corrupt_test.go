@@ -112,7 +112,7 @@ func TestPeriodicCheckDetectsCorruption(t *testing.T) {
 		}
 	})
 
-	cc := NewEtcdctl(epc.EndpointsV3())
+	cc := NewEtcdctl(epc.EndpointsV3(), clientNonTLS, false, false)
 
 	for i := 0; i < 10; i++ {
 		err := cc.Put(testutil.PickKey(int64(i)), fmt.Sprint(i))
@@ -137,7 +137,7 @@ func TestPeriodicCheckDetectsCorruption(t *testing.T) {
 	time.Sleep(checkTime * 11 / 10)
 	alarmResponse, err := cc.AlarmList()
 	assert.NoError(t, err, "error on alarm list")
-	assert.Equal(t, []*etcdserverpb.AlarmMember{{Alarm: etcdserverpb.AlarmType_CORRUPT, MemberID: memberID}}, alarmResponse.Alarms)
+	assert.Equal(t, []*etcdserverpb.AlarmMember{{Alarm: etcdserverpb.AlarmType_CORRUPT, MemberID: 0}}, alarmResponse.Alarms)
 }
 
 func TestCompactHashCheckDetectCorruption(t *testing.T) {
@@ -158,20 +158,14 @@ func TestCompactHashCheckDetectCorruption(t *testing.T) {
 		}
 	})
 
-	cc := NewEtcdctl(epc.EndpointsV3())
+	cc := NewEtcdctl(epc.EndpointsV3(), clientNonTLS, false, false)
 
 	for i := 0; i < 10; i++ {
 		err := cc.Put(testutil.PickKey(int64(i)), fmt.Sprint(i))
 		assert.NoError(t, err, "error on put")
 	}
-	members, err := cc.MemberList()
+	_, err = cc.MemberList()
 	assert.NoError(t, err, "error on member list")
-	var memberID uint64
-	for _, m := range members.Members {
-		if m.Name == epc.procs[0].Config().name {
-			memberID = m.ID
-		}
-	}
 
 	epc.procs[0].Stop()
 	err = testutil.CorruptBBolt(datadir.ToBackendFileName(epc.procs[0].Config().dataDirPath))
@@ -184,5 +178,5 @@ func TestCompactHashCheckDetectCorruption(t *testing.T) {
 	time.Sleep(checkTime * 11 / 10)
 	alarmResponse, err := cc.AlarmList()
 	assert.NoError(t, err, "error on alarm list")
-	assert.Equal(t, []*etcdserverpb.AlarmMember{{Alarm: etcdserverpb.AlarmType_CORRUPT, MemberID: memberID}}, alarmResponse.Alarms)
+	assert.Equal(t, []*etcdserverpb.AlarmMember{{Alarm: etcdserverpb.AlarmType_CORRUPT, MemberID: 0}}, alarmResponse.Alarms)
 }

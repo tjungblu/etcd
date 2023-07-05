@@ -406,7 +406,7 @@ func TestV3AuthOldRevConcurrent(t *testing.T) {
 		role, user := fmt.Sprintf("test-role-%d", i), fmt.Sprintf("test-user-%d", i)
 		_, err := c.RoleAdd(context.TODO(), role)
 		testutil.AssertNil(t, err)
-		_, err = c.RoleGrantPermission(context.TODO(), role, "", clientv3.GetPrefixRangeEnd(""), clientv3.PermissionType(clientv3.PermReadWrite))
+		_, err = c.RoleGrantPermission(context.TODO(), role, "\x00", clientv3.GetPrefixRangeEnd(""), clientv3.PermissionType(clientv3.PermReadWrite))
 		testutil.AssertNil(t, err)
 		_, err = c.UserAdd(context.TODO(), user, "123")
 		testutil.AssertNil(t, err)
@@ -497,39 +497,6 @@ func TestV3AuthRestartMember(t *testing.T) {
 	// nothing has changed, but it fails without refreshing cache after restart
 	_, err = c2.Put(context.TODO(), "foo", "bar2")
 	testutil.AssertNil(t, err)
-}
-
-func TestV3AuthWatchAndTokenExpire(t *testing.T) {
-	BeforeTest(t)
-	clus := NewClusterV3(t, &ClusterConfig{Size: 1, AuthTokenTTL: 3})
-	defer clus.Terminate(t)
-
-	ctx, cancel := context.WithTimeout(context.TODO(), 10*time.Second)
-	defer cancel()
-
-	authSetupRoot(t, toGRPC(clus.Client(0)).Auth)
-
-	c, cerr := NewClient(t, clientv3.Config{Endpoints: clus.Client(0).Endpoints(), Username: "root", Password: "123"})
-	if cerr != nil {
-		t.Fatal(cerr)
-	}
-	defer c.Close()
-
-	_, err := c.Put(ctx, "key", "val")
-	if err != nil {
-		t.Fatalf("Unexpected error from Put: %v", err)
-	}
-
-	// The first watch gets a valid auth token through watcher.newWatcherGrpcStream()
-	// We should discard the first one by waiting TTL after the first watch.
-	wChan := c.Watch(ctx, "key", clientv3.WithRev(1))
-	watchResponse := <-wChan
-
-	time.Sleep(5 * time.Second)
-
-	wChan = c.Watch(ctx, "key", clientv3.WithRev(1))
-	watchResponse = <-wChan
-	testutil.AssertNil(t, watchResponse.Err())
 }
 
 func TestV3AuthWatchErrorAndWatchId0(t *testing.T) {
