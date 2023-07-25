@@ -27,15 +27,6 @@
 		]
 	},
 	{
-		"project": "github.com/certifi/gocertifi",
-		"licenses": [
-			{
-				"type": "Mozilla Public License 2.0",
-				"confidence": 1
-			}
-		]
-	},
-	{
 		"project": "github.com/cespare/xxhash/v2",
 		"licenses": [
 			{
@@ -46,24 +37,6 @@
 	},
 	{
 		"project": "github.com/cockroachdb/datadriven",
-		"licenses": [
-			{
-				"type": "Apache License 2.0",
-				"confidence": 1
-			}
-		]
-	},
-	{
-		"project": "github.com/cockroachdb/errors",
-		"licenses": [
-			{
-				"type": "Apache License 2.0",
-				"confidence": 1
-			}
-		]
-	},
-	{
-		"project": "github.com/cockroachdb/logtags",
 		"licenses": [
 			{
 				"type": "Apache License 2.0",
@@ -131,15 +104,6 @@
 			{
 				"type": "Apache License 2.0",
 				"confidence": 1
-			}
-		]
-	},
-	{
-		"project": "github.com/getsentry/raven-go",
-		"licenses": [
-			{
-				"type": "BSD 3-clause \"New\" or \"Revised\" License",
-				"confidence": 0.9663865546218487
 			}
 		]
 	},
@@ -293,15 +257,6 @@
 			{
 				"type": "MIT License",
 				"confidence": 0.9891304347826086
-			}
-		]
-	},
-	{
-		"project": "github.com/pkg/errors",
-		"licenses": [
-			{
-				"type": "BSD 2-clause \"Simplified\" License",
-				"confidence": 1
 			}
 		]
 	},
@@ -657,7 +612,16 @@
 		]
 	},
 	{
-		"project": "golang.org/x/sys",
+		"project": "golang.org/x/sync/errgroup",
+		"licenses": [
+			{
+				"type": "BSD 3-clause \"New\" or \"Revised\" License",
+				"confidence": 0.9663865546218487
+			}
+		]
+	},
+	{
+		"project": "golang.org/x/sys/unix",
 		"licenses": [
 			{
 				"type": "BSD 3-clause \"New\" or \"Revised\" License",

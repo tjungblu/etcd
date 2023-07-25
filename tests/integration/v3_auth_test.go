@@ -177,12 +177,10 @@ func testV3AuthWithLeaseRevokeWithRoot(t *testing.T, ccfg ClusterConfig) {
 	// wait for lease expire
 	time.Sleep(3 * time.Second)
 
-	tresp, terr := api.Lease.LeaseTimeToLive(
+	tresp, terr := rootc.TimeToLive(
 		context.TODO(),
-		&pb.LeaseTimeToLiveRequest{
-			ID:   int64(leaseID),
-			Keys: true,
-		},
+		leaseID,
+		clientv3.WithAttachedKeys(),
 	)
 	if terr != nil {
 		t.Error(terr)
@@ -406,7 +404,7 @@ func TestV3AuthOldRevConcurrent(t *testing.T) {
 		role, user := fmt.Sprintf("test-role-%d", i), fmt.Sprintf("test-user-%d", i)
 		_, err := c.RoleAdd(context.TODO(), role)
 		testutil.AssertNil(t, err)
-		_, err = c.RoleGrantPermission(context.TODO(), role, "", clientv3.GetPrefixRangeEnd(""), clientv3.PermissionType(clientv3.PermReadWrite))
+		_, err = c.RoleGrantPermission(context.TODO(), role, "\x00", clientv3.GetPrefixRangeEnd(""), clientv3.PermissionType(clientv3.PermReadWrite))
 		testutil.AssertNil(t, err)
 		_, err = c.UserAdd(context.TODO(), user, "123")
 		testutil.AssertNil(t, err)
@@ -499,39 +497,6 @@ func TestV3AuthRestartMember(t *testing.T) {
 	testutil.AssertNil(t, err)
 }
 
-func TestV3AuthWatchAndTokenExpire(t *testing.T) {
-	BeforeTest(t)
-	clus := NewClusterV3(t, &ClusterConfig{Size: 1, AuthTokenTTL: 3})
-	defer clus.Terminate(t)
-
-	ctx, cancel := context.WithTimeout(context.TODO(), 10*time.Second)
-	defer cancel()
-
-	authSetupRoot(t, toGRPC(clus.Client(0)).Auth)
-
-	c, cerr := NewClient(t, clientv3.Config{Endpoints: clus.Client(0).Endpoints(), Username: "root", Password: "123"})
-	if cerr != nil {
-		t.Fatal(cerr)
-	}
-	defer c.Close()
-
-	_, err := c.Put(ctx, "key", "val")
-	if err != nil {
-		t.Fatalf("Unexpected error from Put: %v", err)
-	}
-
-	// The first watch gets a valid auth token through watcher.newWatcherGrpcStream()
-	// We should discard the first one by waiting TTL after the first watch.
-	wChan := c.Watch(ctx, "key", clientv3.WithRev(1))
-	watchResponse := <-wChan
-
-	time.Sleep(5 * time.Second)
-
-	wChan = c.Watch(ctx, "key", clientv3.WithRev(1))
-	watchResponse = <-wChan
-	testutil.AssertNil(t, watchResponse.Err())
-}
-
 func TestV3AuthWatchErrorAndWatchId0(t *testing.T) {
 	BeforeTest(t)
 	clus := NewClusterV3(t, &ClusterConfig{Size: 3})
@@ -585,4 +550,87 @@ func TestV3AuthWatchErrorAndWatchId0(t *testing.T) {
 	}
 
 	<-watchEndCh
+}
+
+func TestV3AuthWithLeaseTimeToLive(t *testing.T) {
+	BeforeTest(t)
+	clus := NewClusterV3(t, &ClusterConfig{Size: 1})
+	defer clus.Terminate(t)
+
+	users := []user{
+		{
+			name:     "user1",
+			password: "user1-123",
+			role:     "role1",
+			key:      "k1",
+			end:      "k3",
+		},
+		{
+			name:     "user2",
+			password: "user2-123",
+			role:     "role2",
+			key:      "k2",
+			end:      "k4",
+		},
+	}
+	authSetupUsers(t, toGRPC(clus.Client(0)).Auth, users)
+
+	authSetupRoot(t, toGRPC(clus.Client(0)).Auth)
+
+	user1c, cerr := NewClient(t, clientv3.Config{Endpoints: clus.Client(0).Endpoints(), Username: "user1", Password: "user1-123"})
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	defer user1c.Close()
+
+	user2c, cerr := NewClient(t, clientv3.Config{Endpoints: clus.Client(0).Endpoints(), Username: "user2", Password: "user2-123"})
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	defer user2c.Close()
+
+	leaseResp, err := user1c.Grant(context.TODO(), 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaseID := leaseResp.ID
+	_, err = user1c.Put(context.TODO(), "k1", "val", clientv3.WithLease(leaseID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// k2 can be accessed from both user1 and user2
+	_, err = user1c.Put(context.TODO(), "k2", "val", clientv3.WithLease(leaseID))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = user1c.TimeToLive(context.TODO(), leaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = user2c.TimeToLive(context.TODO(), leaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = user2c.TimeToLive(context.TODO(), leaseID, clientv3.WithAttachedKeys())
+	if err == nil {
+		t.Fatal("timetolive from user2 should be failed with permission denied")
+	}
+
+	rootc, cerr := NewClient(t, clientv3.Config{Endpoints: clus.Client(0).Endpoints(), Username: "root", Password: "123"})
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	defer rootc.Close()
+
+	if _, err := rootc.RoleRevokePermission(context.TODO(), "role1", "k1", "k3"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = user1c.TimeToLive(context.TODO(), leaseID, clientv3.WithAttachedKeys())
+	if err == nil {
+		t.Fatal("timetolive from user2 should be failed with permission denied")
+	}
 }
