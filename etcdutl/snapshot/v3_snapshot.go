@@ -30,7 +30,7 @@ import (
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/pkg/v3/fileutil"
 	"go.etcd.io/etcd/client/pkg/v3/types"
-	"go.etcd.io/etcd/client/v3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/snapshot"
 	"go.etcd.io/etcd/raft/v3"
 	"go.etcd.io/etcd/raft/v3/raftpb"
@@ -263,7 +263,6 @@ func (s *v3Manager) Restore(cfg RestoreConfig) error {
 		zap.String("wal-dir", s.walDir),
 		zap.String("data-dir", dataDir),
 		zap.String("snap-dir", s.snapDir),
-		zap.Stack("stack"),
 	)
 
 	if err = s.saveDB(); err != nil {
@@ -415,13 +414,8 @@ func (s *v3Manager) copyAndVerifyDB() error {
 	if dberr != nil {
 		return dberr
 	}
-	dbClosed := false
-	defer func() {
-		if !dbClosed {
-			db.Close()
-			dbClosed = true
-		}
-	}()
+	defer db.Close()
+
 	if _, err := io.Copy(db, srcf); err != nil {
 		return err
 	}
@@ -458,7 +452,7 @@ func (s *v3Manager) copyAndVerifyDB() error {
 	}
 
 	// db hash is OK, can now modify DB so it can be part of a new cluster
-	db.Close()
+
 	return nil
 }
 
