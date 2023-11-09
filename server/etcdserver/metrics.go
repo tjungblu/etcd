@@ -175,6 +175,12 @@ var (
 		Buckets: prometheus.ExponentialBuckets(0.0001, 2, 20),
 	},
 		[]string{"version", "op", "success"})
+	rangeResponseKvCount = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "etcd",
+		Subsystem: "server",
+		Name:      "range_response_kv_count",
+		Help:      "The number of KVs returned by range calls.",
+	}, []string{"range_begin"})
 )
 
 func init() {
@@ -201,6 +207,7 @@ func init() {
 	prometheus.MustRegister(fdUsed)
 	prometheus.MustRegister(fdLimit)
 	prometheus.MustRegister(applySec)
+	prometheus.MustRegister(rangeResponseKvCount)
 
 	currentVersion.With(prometheus.Labels{
 		"server_version": version.Version,
