@@ -17,6 +17,7 @@ package etcdutl
 import (
 	"errors"
 	"fmt"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/membership"
 
 	"github.com/spf13/cobra"
 	"go.etcd.io/etcd/etcdutl/v3/snapshot"
@@ -31,6 +32,7 @@ var (
 
 type printer interface {
 	DBStatus(snapshot.Status)
+	MemberList(members []*membership.Member)
 }
 
 func NewPrinter(printerType string) printer {

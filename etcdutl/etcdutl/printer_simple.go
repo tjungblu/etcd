@@ -16,6 +16,7 @@ package etcdutl
 
 import (
 	"fmt"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/membership"
 	"strings"
 
 	"go.etcd.io/etcd/etcdutl/v3/snapshot"
@@ -28,5 +29,12 @@ func (s *simplePrinter) DBStatus(ds snapshot.Status) {
 	_, rows := makeDBStatusTable(ds)
 	for _, row := range rows {
 		fmt.Println(strings.Join(row, ", "))
+	}
+}
+
+func (s *simplePrinter) MemberList(members []*membership.Member) {
+	fmt.Printf("%s\t%s\t%v\n", "id", "name", "peer urls")
+	for _, member := range members {
+		fmt.Printf("%s\t%s\t%v\n", member.ID, member.Name, member.PeerURLs)
 	}
 }
