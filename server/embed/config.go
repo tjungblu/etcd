@@ -523,8 +523,8 @@ func NewConfig() *Config {
 		ExperimentalDowngradeCheckTime:           DefaultDowngradeCheckTime,
 		ExperimentalMemoryMlock:                  false,
 		ExperimentalTxnModeWriteWithSharedBuffer: true,
-		ExperimentalStopGRPCServiceOnDefrag:      false,
 		ExperimentalMaxLearners:                  membership.DefaultMaxLearners,
+		ExperimentalStopGRPCServiceOnDefrag:      false,
 
 		ExperimentalCompactHashCheckEnabled: false,
 		ExperimentalCompactHashCheckTime:    time.Minute,
