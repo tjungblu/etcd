@@ -23,7 +23,7 @@ replace (
 require (
 	github.com/dustin/go-humanize v1.0.0
 	github.com/olekukonko/tablewriter v0.0.5
-	github.com/spf13/cobra v1.1.3
+	github.com/spf13/cobra v1.8.0
 	go.etcd.io/bbolt v1.3.10
 	go.etcd.io/etcd/api/v3 v3.5.14
 	go.etcd.io/etcd/client/pkg/v3 v3.5.14
@@ -45,7 +45,7 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.4.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/btree v1.0.1 // indirect
-	github.com/inconshreveable/mousetrap v1.0.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jonboulle/clockwork v0.2.2 // indirect
 	github.com/json-iterator/go v1.1.11 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
@@ -67,7 +67,7 @@ require (
 	go.uber.org/multierr v1.6.0 // indirect
 	golang.org/x/crypto v0.17.0 // indirect
 	golang.org/x/net v0.17.0 // indirect
-	golang.org/x/sys v0.15.0 // indirect
+	golang.org/x/sys v0.20.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba // indirect
 	google.golang.org/genproto v0.0.0-20230822172742-b8732ec3820d // indirect
