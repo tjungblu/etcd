@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -39,9 +40,31 @@ func NewEtcdctl(endpoints []string, connType ClientConnType, isAutoTLS bool, v2 
 	}
 }
 
+func (ctl *Etcdctl) HashKV(rev int64) ([]*clientv3.HashKVResponse, error) {
+	var epHashKVs []*struct {
+		Endpoint string
+		HashKV   *clientv3.HashKVResponse
+	}
+	err := ctl.spawnJsonCmd(&epHashKVs, "endpoint", "hashkv", "--rev", fmt.Sprint(rev))
+	if err != nil {
+		return nil, err
+	}
+	resp := make([]*clientv3.HashKVResponse, len(epHashKVs))
+	for i, e := range epHashKVs {
+		resp[i] = e.HashKV
+	}
+	return resp, err
+}
+
 func (ctl *Etcdctl) Get(key string) (*clientv3.GetResponse, error) {
 	var resp clientv3.GetResponse
 	err := ctl.spawnJsonCmd(&resp, "get", key)
+	return &resp, err
+}
+
+func (ctl *Etcdctl) GetWithPrefix(key string) (*clientv3.GetResponse, error) {
+	var resp clientv3.GetResponse
+	err := ctl.spawnJsonCmd(&resp, "get", key, "--prefix")
 	return &resp, err
 }
 
@@ -133,6 +156,15 @@ func (ctl *Etcdctl) MemberAdd(name string, peerURLs []string) (*clientv3.MemberA
 	return &resp, err
 }
 
+func (ctl *Etcdctl) MemberAddAsLearner(name string, peerURLs []string) (*clientv3.MemberAddResponse, error) {
+	if ctl.v2 {
+		panic("Unsupported method for v2")
+	}
+	var resp clientv3.MemberAddResponse
+	err := ctl.spawnJsonCmd(&resp, "member", "add", name, "--learner", "--peer-urls", strings.Join(peerURLs, ","))
+	return &resp, err
+}
+
 func (ctl *Etcdctl) MemberRemove(id uint64) (*clientv3.MemberRemoveResponse, error) {
 	if ctl.v2 {
 		panic("Unsupported method for v2")
@@ -148,6 +180,15 @@ func (ctl *Etcdctl) Compact(rev int64) (*clientv3.CompactResponse, error) {
 	}
 	args := ctl.cmdArgs("compact", fmt.Sprint(rev))
 	return nil, SpawnWithExpectWithEnv(args, ctl.env(), fmt.Sprintf("compacted revision %v", rev))
+}
+
+func (ctl *Etcdctl) Defragment(timeout time.Duration) error {
+	args := append(ctl.cmdArgs(), "defrag")
+	if timeout != 0 {
+		args = append(args, fmt.Sprintf("--command-timeout=%s", timeout))
+	}
+
+	return SpawnWithExpectWithEnv(args, ctl.env(), "Finished defragmenting etcd member")
 }
 
 func (ctl *Etcdctl) Status() ([]*clientv3.StatusResponse, error) {
