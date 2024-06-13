@@ -15,6 +15,7 @@ replace (
 )
 
 require (
+	github.com/coreos/go-semver v0.3.0
 	github.com/dustin/go-humanize v1.0.0
 	github.com/etcd-io/gofail v0.0.0-20190801230047-ad7f989257ca
 	github.com/gogo/protobuf v1.3.2
@@ -28,14 +29,15 @@ require (
 	github.com/spf13/cobra v1.1.3
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.4
-	go.etcd.io/etcd/api/v3 v3.5.13
-	go.etcd.io/etcd/client/pkg/v3 v3.5.13
-	go.etcd.io/etcd/client/v2 v2.305.13
-	go.etcd.io/etcd/client/v3 v3.5.13
-	go.etcd.io/etcd/etcdutl/v3 v3.5.13
-	go.etcd.io/etcd/pkg/v3 v3.5.13
-	go.etcd.io/etcd/raft/v3 v3.5.13
-	go.etcd.io/etcd/server/v3 v3.5.13
+	go.etcd.io/etcd/api/v3 v3.5.14
+	go.etcd.io/etcd/client/pkg/v3 v3.5.14
+	go.etcd.io/etcd/client/v2 v2.305.14
+	go.etcd.io/etcd/client/v3 v3.5.14
+	go.etcd.io/etcd/etcdutl/v3 v3.5.14
+	go.etcd.io/etcd/pkg/v3 v3.5.14
+	go.etcd.io/etcd/raft/v3 v3.5.14
+	go.etcd.io/etcd/server/v3 v3.5.14
+	go.etcd.io/gofail v0.1.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.46.0
 	go.opentelemetry.io/otel v1.20.0
 	go.opentelemetry.io/otel/sdk v1.20.0
@@ -53,7 +55,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
-	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/creack/pty v1.1.11 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -76,7 +77,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
-	go.etcd.io/bbolt v1.3.9 // indirect
+	go.etcd.io/bbolt v1.3.10 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.20.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.20.0 // indirect
 	go.opentelemetry.io/otel/metric v1.20.0 // indirect

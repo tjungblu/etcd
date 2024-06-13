@@ -24,8 +24,10 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"testing"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"go.etcd.io/etcd/client/pkg/v3/fileutil"
 	"go.etcd.io/etcd/pkg/v3/expect"
 	"go.etcd.io/etcd/pkg/v3/proxy"
@@ -35,6 +37,7 @@ import (
 var (
 	EtcdServerReadyLines = []string{"ready to serve client requests"}
 	BinPath              string
+	BinPathLastRelease   string
 	CtlBinPath           string
 	UtlBinPath           string
 )
@@ -232,6 +235,14 @@ func (ep *EtcdServerProcess) Logs() LogsExpect {
 	return ep.proc
 }
 
+func AssertProcessLogs(t *testing.T, ep EtcdProcess, expectLog string) {
+	t.Helper()
+	_, err := ep.Logs().Expect(expectLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (ep *EtcdServerProcess) PeerProxy() proxy.Server {
 	return ep.proxy
 }
@@ -394,4 +405,28 @@ func parseFailpointsBody(body io.Reader) (map[string]string, error) {
 		failpoints[failpoint] = value
 	}
 	return failpoints, nil
+}
+
+func GetVersionFromBinary(binaryPath string) (*semver.Version, error) {
+	lines, err := RunUtilCompletion([]string{binaryPath, "--version"}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("could not find binary version from %s, err: %w", binaryPath, err)
+	}
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "etcd Version:") {
+			versionString := strings.TrimSpace(strings.SplitAfter(line, ":")[1])
+			version, err := semver.NewVersion(versionString)
+			if err != nil {
+				return nil, err
+			}
+			return &semver.Version{
+				Major: version.Major,
+				Minor: version.Minor,
+				Patch: version.Patch,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("could not find version in binary output of %s, lines outputted were %v", binaryPath, lines)
 }
