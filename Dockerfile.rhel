@@ -12,6 +12,8 @@ FROM registry.ci.openshift.org/ocp/4.16:base-rhel9
 
 ENTRYPOINT ["/usr/bin/etcd"]
 
+RUN yum install --setopt=tsflags=nodocs -y jq && yum clean all && rm -rf /var/cache/yum/*
+
 COPY --from=builder /go/src/go.etcd.io/etcd/bin/etcd /usr/bin/
 COPY --from=builder /go/src/go.etcd.io/etcd/bin/etcdctl /usr/bin/
 COPY --from=builder /go/src/go.etcd.io/etcd/bin/etcdutl /usr/bin/
