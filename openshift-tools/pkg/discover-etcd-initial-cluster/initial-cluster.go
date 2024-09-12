@@ -2,10 +2,15 @@ package discover_etcd_initial_cluster
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"go.uber.org/zap"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +45,10 @@ type DiscoverEtcdInitialClusterOptions struct {
 
 	// DataDir is the directory created when etcd starts the first time
 	DataDir string
+}
+
+type revisionStruct struct {
+	ClusterId uint64 `json:"clusterId,omitempty"`
 }
 
 func NewDiscoverEtcdInitialCluster() *DiscoverEtcdInitialClusterOptions {
@@ -150,6 +159,11 @@ func (o *DiscoverEtcdInitialClusterOptions) Run() error {
 	}
 	defer client.Close()
 
+	localClusterIdentifier, err := o.findLocalClusterIdentifier()
+	if err != nil {
+		return fmt.Errorf("could not find local cluster id: %w", err)
+	}
+
 	// the startupProbe waits for 180s, so we are giving 135s to this process and 45s to the etcd that runs after us.
 	for i := 0; i < 135; i++ {
 		fmt.Fprintf(os.Stderr, "#### attempt %d\n", i)
@@ -160,9 +174,17 @@ func (o *DiscoverEtcdInitialClusterOptions) Run() error {
 			fmt.Fprintf(os.Stderr, "member list request failed: %v", err)
 			continue
 		}
+		fmt.Fprintf(os.Stderr, "Live Cluster ID: [%s], local: [%s] \n",
+			strconv.FormatUint(cluster.Header.ClusterId, 16),
+			strconv.FormatUint(localClusterIdentifier, 16))
 		logCurrentMembership(cluster.Members)
 
-		initialCluster, memberFound, err := o.getInitialCluster(cluster.Members, dataDirExists)
+		mismatchingClusterId := localClusterIdentifier != 0 && cluster.Header.ClusterId != localClusterIdentifier
+
+		initialCluster, memberFound, err := o.getInitialCluster(
+			cluster.Members,
+			dataDirExists,
+			mismatchingClusterId)
 		if err != nil && memberFound {
 			return err
 		}
@@ -173,6 +195,7 @@ func (o *DiscoverEtcdInitialClusterOptions) Run() error {
 			continue
 		}
 		// Empty string value for initialCluster is valid.
+		// this is important to go as the only resulting string to stdout, as it is creating an env var in the pod yaml
 		fmt.Println(initialCluster)
 
 		return nil
@@ -180,7 +203,7 @@ func (o *DiscoverEtcdInitialClusterOptions) Run() error {
 	return fmt.Errorf("timed out")
 }
 
-func (o *DiscoverEtcdInitialClusterOptions) getInitialCluster(members []*etcdserverpb.Member, dataDirExists bool) (string, bool, error) {
+func (o *DiscoverEtcdInitialClusterOptions) getInitialCluster(members []*etcdserverpb.Member, dataDirExists, mismatchingClusterId bool) (string, bool, error) {
 	target := url.URL{
 		Scheme: o.TargetPeerURLScheme,
 		Host:   fmt.Sprintf("%s:%s", o.TargetPeerURLHost, o.TargetPeerURLPort),
@@ -222,10 +245,19 @@ func (o *DiscoverEtcdInitialClusterOptions) getInitialCluster(members []*etcdser
 	}
 
 	// Condition: member not found with dataDir
-	// The member has been removed from the cluster. The dataDir will be archived once the operator
-	// scales up etcd.
-	// Result: retry member check allowing operator time to scale up etcd again on this node.
+	// The member has been removed from the cluster, likely from a restore operation.
+	// Result: if the cluster ID does not match anymore, we're archiving the data dir and returning a signal to start etcd.
+	// If it matches, there is a scaling problem and the datadir must be removed manually.
 	if !memberFound && dataDirExists {
+		if mismatchingClusterId {
+			_, err := archiveDataDir(o.DataDir)
+			if err != nil {
+				return "", memberFound, err
+			}
+
+			return "", true, nil
+		}
+
 		return "", memberFound, fmt.Errorf("member %q not found in member list but dataDir exists, check operator logs for possible scaling problems\n", target.String())
 	}
 
@@ -237,6 +269,42 @@ func (o *DiscoverEtcdInitialClusterOptions) getInitialCluster(members []*etcdser
 	}
 
 	return "", memberFound, nil
+}
+
+func (o *DiscoverEtcdInitialClusterOptions) findLocalClusterIdentifier() (uint64, error) {
+	// we favor the revision.json as its fastest to parse, if we error here we can still rely on the WAL parsing (slow)
+	fromRevisionFile, revErr := o.findLocalClusterIdFromRevFile()
+	// zero can also be returned when the revision file does not contain the ClusterId attribute
+	if revErr != nil || fromRevisionFile == 0 {
+		fmt.Fprintf(os.Stderr, "could not parse revision.json, falling back to WAL parsing. Err=%v", revErr)
+		fromWal, walErr := o.findLocalClusterIdFromWal()
+		if walErr != nil {
+			return 0, fmt.Errorf("couldn't find cluster id in WAL or revision: %v", errors.Join(walErr, revErr))
+		}
+		return fromWal, nil
+	}
+
+	return fromRevisionFile, nil
+}
+
+func (o *DiscoverEtcdInitialClusterOptions) findLocalClusterIdFromRevFile() (uint64, error) {
+	content, err := os.ReadFile(path.Join(o.DataDir, "revision.json"))
+	if err != nil {
+		return 0, err
+	}
+
+	result := revisionStruct{}
+	err = json.Unmarshal(content, &result)
+	if err != nil {
+		return 0, err
+	}
+
+	return result.ClusterId, nil
+}
+
+func (o *DiscoverEtcdInitialClusterOptions) findLocalClusterIdFromWal() (uint64, error) {
+	x, err := readClusterIdFromWAL(zap.NewNop(), o.DataDir)
+	return uint64(x), err
 }
 
 func (o *DiscoverEtcdInitialClusterOptions) getClient() (*clientv3.Client, error) {
@@ -276,6 +344,7 @@ func archiveDataDir(dataDir string) (string, error) {
 	if err := os.Rename(sourceDir, targetDir); err != nil {
 		return "", err
 	}
+	fmt.Fprintf(os.Stdout, "moved datadir successfully to %s\n", targetDir)
 	return targetDir, nil
 }
 
