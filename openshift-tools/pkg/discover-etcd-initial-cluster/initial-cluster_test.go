@@ -16,12 +16,13 @@ var (
 
 func Test_ensureValidMember(t *testing.T) {
 	tests := map[string]struct {
-		member             *etcdserverpb.Member
-		dataDirExists      bool
-		wantMemberFound    bool
-		wantInitialCluster string
-		wantErr            bool
-		wantErrString      string
+		member               *etcdserverpb.Member
+		dataDirExists        bool
+		wantMemberFound      bool
+		mismatchingClusterId bool
+		wantInitialCluster   string
+		wantErr              bool
+		wantErrString        string
 	}{
 		"started member found no dataDir": {
 			member:             startedEtcdMember,
@@ -45,6 +46,14 @@ func Test_ensureValidMember(t *testing.T) {
 			wantInitialCluster: emptyInitialCluster,
 			wantErr:            true,
 			wantErrString:      "check operator logs for possible scaling problems",
+		},
+		"member not found with dataDir and mismatching clusterid": {
+			member:               notFoundEtcdMember,
+			wantMemberFound:      true,
+			mismatchingClusterId: true,
+			dataDirExists:        true,
+			wantInitialCluster:   "",
+			wantErr:              false,
 		},
 		"member not found no dataDir": {
 			member:             notFoundEtcdMember,
@@ -79,7 +88,7 @@ func Test_ensureValidMember(t *testing.T) {
 				TargetName:          "etcd-0",
 				DataDir:             "/tmp",
 			}
-			gotInitialCluster, gotMemberFound, err := o.getInitialCluster([]*etcdserverpb.Member{test.member}, test.dataDirExists)
+			gotInitialCluster, gotMemberFound, err := o.getInitialCluster([]*etcdserverpb.Member{test.member}, test.dataDirExists, test.mismatchingClusterId)
 			if gotInitialCluster != test.wantInitialCluster {
 				t.Fatalf("initialCluster: want: %q, got: %q", test.wantInitialCluster, gotInitialCluster)
 			}
