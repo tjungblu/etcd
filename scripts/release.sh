@@ -89,7 +89,7 @@ main() {
   if [ ! -d "${reldir}/etcd" ] && [ "${IN_PLACE}" == 0 ]; then
     mkdir -p "${reldir}"
     cd "${reldir}"
-    run git clone "${REPOSITORY}" --branch "${BRANCH}"
+    run git clone "${REPOSITORY}" --branch "${BRANCH}" --depth 1
     run cd "${reldir}/etcd" || exit 2
     run git checkout "${BRANCH}" || exit 2
     run git pull origin
@@ -280,9 +280,6 @@ main() {
 
     log_callout "Pushing container manifest list to gcr.io ${RELEASE_VERSION}"
     maybe_run docker manifest push "gcr.io/etcd-development/etcd:${RELEASE_VERSION}"
-
-    log_callout "Setting permissions using gsutil..."
-    maybe_run gsutil -m acl ch -u allUsers:R -r gs://artifacts.etcd-development.appspot.com
   fi
 
   ### Release validation

@@ -50,6 +50,7 @@ source ./build.sh
 
 PASSES=${PASSES:-"fmt bom dep build unit"}
 PKG=${PKG:-}
+SHELLCHECK_VERSION=${SHELLCHECK_VERSION:-"v0.10.0"}
 
 if [ -z "${GOARCH:-}" ]; then
   GOARCH=$(go env GOARCH);
@@ -393,9 +394,29 @@ function fmt_pass {
 }
 
 function shellcheck_pass {
-  if tool_exists "shellcheck" "https://github.com/koalaman/shellcheck#installing"; then
-    generic_checker run shellcheck -fgcc build test scripts/*.sh ./*.sh
+  SHELLCHECK=shellcheck
+  
+  if ! tool_exists "shellcheck" "https://github.com/koalaman/shellcheck#installing"; then
+    log_callout "Installing shellcheck $SHELLCHECK_VERSION"
+
+    if [ "$GOARCH" == "amd64" ]; then
+      URL="https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+    elif [[ "$GOARCH" == "arm" || "$GOARCH" == "arm64" ]]; then
+      URL="https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.aarch64.tar.xz"
+    else
+      echo "Unsupported architecture: $GOARCH"
+      exit 1
+    fi
+
+    wget -qO- "$URL" | tar -xJv -C /tmp/ --strip-components=1
+    mkdir -p ./bin
+    mv /tmp/shellcheck ./bin/
+    SHELLCHECK=./bin/shellcheck
   fi
+
+  echo "Running shellcheck with $SHELLCHECK"
+  generic_checker run ${SHELLCHECK} -fgcc build test scripts/*.sh ./*.sh
+
 }
 
 function shellws_pass {
@@ -610,20 +631,27 @@ function dump_deps_of_module() {
   if ! module=$(run go list -m); then
     return 255
   fi
-  run go list -f "{{if not .Indirect}}{{if .Version}}{{.Path}},{{.Version}},${module}{{end}}{{end}}" -m all
+  run go mod edit -json | jq -r '.Require[] | .Path+","+.Version+","+if .Indirect then " (indirect)" else "" end+",'"${module}"'"'
 }
 
 # Checks whether dependencies are consistent across modules
 function dep_pass {
   local all_dependencies
+  local tools_mod_dependencies
   all_dependencies=$(run_for_modules dump_deps_of_module | sort) || return 2
+  # tools/mod is a special case. It is a module that is not included in the
+  # module list from test_lib.sh. However, we need to ensure that the
+  # dependency versions match the rest of the project. Therefore, explicitly
+  # execute the command for tools/mod, and append its dependencies to the list.
+  tools_mod_dependencies=$(run_for_module "tools/mod" dump_deps_of_module "./...") || return 2
+  all_dependencies="${all_dependencies}"$'\n'"${tools_mod_dependencies}"
 
   local duplicates
   duplicates=$(echo "${all_dependencies}" | cut -d ',' -f 1,2 | sort | uniq | cut -d ',' -f 1 | sort | uniq -d) || return 2
 
   for dup in ${duplicates}; do
     log_error "FAIL: inconsistent versions for depencency: ${dup}"
-    echo "${all_dependencies}" | grep "${dup}" | sed "s|\\([^,]*\\),\\([^,]*\\),\\([^,]*\\)|  - \\1@\\2 from: \\3|g"
+    echo "${all_dependencies}" | grep "${dup}," | sed 's|\([^,]*\),\([^,]*\),\([^,]*\),\([^,]*\)|  - \1@\2\3 from: \4|g'
   done
   if [[ -n "${duplicates}" ]]; then
     log_error "FAIL: inconsistent dependencies"

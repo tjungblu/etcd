@@ -17,12 +17,16 @@ package e2e
 import (
 	"fmt"
 	"io/ioutil"
+	"net"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"go.etcd.io/etcd/pkg/v3/expect"
+	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/tests/v3/framework/e2e"
 )
 
@@ -122,6 +126,58 @@ func TestEtcdUnixPeers(t *testing.T) {
 	}
 }
 
+// TestEtcdListenMetricsURLsWithMissingClientTLSInfo checks that the HTTPs listen metrics URL
+// but without the client TLS info will fail its verification.
+func TestEtcdListenMetricsURLsWithMissingClientTLSInfo(t *testing.T) {
+	e2e.SkipInShortMode(t)
+
+	tempDir := t.TempDir()
+	defer os.RemoveAll(tempDir)
+
+	caFile, certFiles, keyFiles, err := generateCertsForIPs(tempDir, []net.IP{net.ParseIP("127.0.0.1")})
+	require.NoError(t, err)
+
+	// non HTTP but metrics URL is HTTPS, invalid when the client TLS info is not provided
+	clientURL := fmt.Sprintf("http://localhost:%d", e2e.EtcdProcessBasePort)
+	peerURL := fmt.Sprintf("https://localhost:%d", e2e.EtcdProcessBasePort+1)
+	listenMetricsURL := fmt.Sprintf("https://localhost:%d", e2e.EtcdProcessBasePort+2)
+
+	commonArgs := []string{
+		e2e.BinPath,
+		"--name", "e0",
+		"--data-dir", tempDir,
+
+		"--listen-client-urls", clientURL,
+		"--advertise-client-urls", clientURL,
+
+		"--initial-advertise-peer-urls", peerURL,
+		"--listen-peer-urls", peerURL,
+
+		"--initial-cluster", "e0=" + peerURL,
+
+		"--listen-metrics-urls", listenMetricsURL,
+
+		"--peer-cert-file", certFiles[0],
+		"--peer-key-file", keyFiles[0],
+		"--peer-trusted-ca-file", caFile,
+		"--peer-client-cert-auth",
+	}
+
+	proc, err := e2e.SpawnCmd(commonArgs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		// Don't check the error returned by Stop(), as we expect the process to exit with an error.
+		_ = proc.Stop()
+		_ = proc.Close()
+	}()
+
+	if err := e2e.WaitReadyExpectProc(proc, []string{embed.ErrMissingClientTLSInfoForMetricsURL.Error()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestEtcdPeerCNAuth checks that the inter peer auth based on CN of cert is working correctly.
 func TestEtcdPeerCNAuth(t *testing.T) {
 	e2e.SkipInShortMode(t)
@@ -185,6 +241,96 @@ func TestEtcdPeerCNAuth(t *testing.T) {
 
 		commonArgs = append(commonArgs, args...)
 
+		p, err := e2e.SpawnCmd(commonArgs, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		procs[i] = p
+	}
+
+	for i, p := range procs {
+		var expect []string
+		if i <= 1 {
+			expect = e2e.EtcdServerReadyLines
+		} else {
+			expect = []string{"remote error: tls: bad certificate"}
+		}
+		if err := e2e.WaitReadyExpectProc(p, expect); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestEtcdPeerMultiCNAuth checks that the inter peer auth based on CN of cert is working correctly
+// when there are multiple allowed values for the CN.
+func TestEtcdPeerMultiCNAuth(t *testing.T) {
+	e2e.SkipInShortMode(t)
+
+	peers, tmpdirs := make([]string, 3), make([]string, 3)
+	for i := range peers {
+		peers[i] = fmt.Sprintf("e%d=https://127.0.0.1:%d", i, e2e.EtcdProcessBasePort+i)
+		tmpdirs[i] = t.TempDir()
+	}
+	ic := strings.Join(peers, ",")
+	procs := make([]*expect.ExpectProcess, len(peers))
+	defer func() {
+		for i := range procs {
+			if procs[i] != nil {
+				procs[i].Stop()
+				procs[i].Close()
+			}
+		}
+	}()
+
+	// all nodes have unique certs with different CNs
+	// node 0 and 1 have a cert with one of the correct CNs, node 2 doesn't
+	for i := range procs {
+		commonArgs := []string{
+			e2e.BinDir + "/etcd",
+			"--name", fmt.Sprintf("e%d", i),
+			"--listen-client-urls", "http://0.0.0.0:0",
+			"--data-dir", tmpdirs[i],
+			"--advertise-client-urls", "http://0.0.0.0:0",
+			"--listen-peer-urls", fmt.Sprintf("https://127.0.0.1:%d,https://127.0.0.1:%d", e2e.EtcdProcessBasePort+i, e2e.EtcdProcessBasePort+len(peers)+i),
+			"--initial-advertise-peer-urls", fmt.Sprintf("https://127.0.0.1:%d", e2e.EtcdProcessBasePort+i),
+			"--initial-cluster", ic,
+		}
+
+		var args []string
+		switch i {
+		case 0:
+			args = []string{
+				"--peer-cert-file", e2e.CertPath, // server.crt has CN "example.com".
+				"--peer-key-file", e2e.PrivateKeyPath,
+				"--peer-client-cert-file", e2e.CertPath,
+				"--peer-client-key-file", e2e.PrivateKeyPath,
+				"--peer-trusted-ca-file", e2e.CaPath,
+				"--peer-client-cert-auth",
+				"--peer-cert-allowed-cn", "example.com,example2.com",
+			}
+		case 1:
+			args = []string{
+				"--peer-cert-file", e2e.CertPath2, // server2.crt has CN "example2.com".
+				"--peer-key-file", e2e.PrivateKeyPath2,
+				"--peer-client-cert-file", e2e.CertPath2,
+				"--peer-client-key-file", e2e.PrivateKeyPath2,
+				"--peer-trusted-ca-file", e2e.CaPath,
+				"--peer-client-cert-auth",
+				"--peer-cert-allowed-cn", "example.com,example2.com",
+			}
+		default:
+			args = []string{
+				"--peer-cert-file", e2e.CertPath3, // server3.crt has CN "ca".
+				"--peer-key-file", e2e.PrivateKeyPath3,
+				"--peer-client-cert-file", e2e.CertPath3,
+				"--peer-client-key-file", e2e.PrivateKeyPath3,
+				"--peer-trusted-ca-file", e2e.CaPath,
+				"--peer-client-cert-auth",
+				"--peer-cert-allowed-cn", "example.com,example2.com",
+			}
+		}
+
+		commonArgs = append(commonArgs, args...)
 		p, err := e2e.SpawnCmd(commonArgs, nil)
 		if err != nil {
 			t.Fatal(err)

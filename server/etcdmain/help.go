@@ -159,7 +159,7 @@ Security:
   --client-crl-file ''
     Path to the client certificate revocation list file.
   --client-cert-allowed-hostname ''
-    Allowed TLS hostname for client cert authentication.
+    Comma-separated list of SAN hostnames for client cert authentication.
   --trusted-ca-file ''
     Path to the client server TLS trusted CA cert file.
   --auto-tls 'false'
@@ -173,9 +173,9 @@ Security:
   --peer-trusted-ca-file ''
     Path to the peer server TLS trusted CA file.
   --peer-cert-allowed-cn ''
-    Required CN for client certs connecting to the peer endpoint.
+    Comma-separated list of allowed CNs for inter-peer TLS authentication.
   --peer-cert-allowed-hostname ''
-    Allowed TLS hostname for inter peer authentication.
+    Comma-separated list of allowed SAN hostnames for inter-peer TLS authentication.
   --peer-auto-tls 'false'
     Peer TLS using self-generated certificates if --peer-key-file and --peer-cert-file are not provided.
   --peer-client-cert-file ''
@@ -211,7 +211,7 @@ Profiling and Monitoring:
   --metrics 'basic'
     Set level of detail for exported metrics, specify 'extensive' to include server side grpc histogram metrics.
   --listen-metrics-urls ''
-    List of URLs to listen on for the metrics and health endpoints.
+    List of URLs to listen on for the /metrics and /health endpoints. For https, the client URL TLS info is used.
 
 Logging:
   --logger 'zap'
@@ -268,6 +268,8 @@ Experimental feature:
     Enable persisting remainingTTL to prevent indefinite auto-renewal of long lived leases. Always enabled in v3.6. Should be used to ensure smooth upgrade from v3.5 clusters with this feature enabled. Requires experimental-enable-lease-checkpoint to be enabled.
   --experimental-compaction-batch-limit 1000
     ExperimentalCompactionBatchLimit sets the maximum revisions deleted in each compaction batch.
+  --experimental-compaction-sleep-interval '10ms'
+    ExperimentalCompactionSleepInterval sets the sleep interval between each compaction batch.
   --experimental-peer-skip-client-san-verification 'false'
     Skip verification of SAN field in client certificate for peer connections.
   --experimental-watch-progress-notify-interval '10m'

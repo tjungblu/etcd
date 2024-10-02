@@ -37,6 +37,7 @@ clean:
 	rm -rf ./release
 	rm -rf ./coverage/*.err ./coverage/*.out
 	rm -rf ./tests/e2e/default.proxy
+	rm -rf ./bin/shellcheck*
 	find ./ -name "127.0.0.1:*" -o -name "localhost:*" -o -name "*.log" -o -name "agent-*" -o -name "*.coverprofile" -o -name "testname-proxy-*" | $(XARGS)
 
 docker-clean:
@@ -582,11 +583,15 @@ gofail-disable: install-gofail
 	PASSES="toggle_failpoints" ./test.sh
 
 .PHONY: verify
-verify: verify-go-versions
+verify: verify-go-versions verify-dep
 
 .PHONY: verify-go-versions
 verify-go-versions:
 	./scripts/verify_go_versions.sh
+
+.PHONY: verify-dep
+verify-dep:
+	PASSES="dep" ./test.sh 2<&1
 
 .PHONY: fix
 fix: sync-toolchain-directive
