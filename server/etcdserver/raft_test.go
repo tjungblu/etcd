@@ -17,6 +17,7 @@ package etcdserver
 import (
 	"encoding/json"
 	"expvar"
+	"github.com/stretchr/testify/require"
 	"reflect"
 	"sync"
 	"testing"
@@ -147,10 +148,11 @@ func TestCreateConfigChangeEnts(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		gents := createConfigChangeEnts(testLogger, tt.ids, tt.self, tt.term, tt.index)
+		gents, idx := createConfigChangeEnts(testLogger, tt.ids, tt.self, tt.term, tt.index)
 		if !reflect.DeepEqual(gents, tt.wents) {
 			t.Errorf("#%d: ents = %v, want %v", i, gents, tt.wents)
 		}
+		require.Equal(t, uint64(len(gents))+tt.index+1, idx)
 	}
 }
 

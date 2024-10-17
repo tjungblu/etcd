@@ -152,7 +152,9 @@ type ServerConfig struct {
 	// Logger logs server-side operations.
 	Logger *zap.Logger
 
-	ForceNewCluster bool
+	ForceNewCluster              bool
+	ForceNewClusterBumpAmount    uint64
+	ForceNewClusterMarkCompacted bool
 
 	// EnableLeaseCheckpoint enables leader to send regular checkpoints to other members to prevent reset of remaining TTL on leader change.
 	EnableLeaseCheckpoint bool

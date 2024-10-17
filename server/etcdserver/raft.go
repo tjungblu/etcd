@@ -592,13 +592,14 @@ func restartAsStandaloneNode(cfg config.ServerConfig, snapshot *raftpb.Snapshot)
 	}
 
 	// force append the configuration change entries
-	toAppEnts := createConfigChangeEnts(
+	toAppEnts, nextIndex := createConfigChangeEnts(
 		cfg.Logger,
 		getIDs(cfg.Logger, snapshot, ents),
 		uint64(id),
 		st.Term,
 		st.Commit,
 	)
+	toAppEnts = append(toAppEnts, createBumpAndCompactionEnts(cfg.ForceNewClusterBumpAmount, cfg.ForceNewClusterMarkCompacted, st.Term, nextIndex)...)
 	ents = append(ents, toAppEnts...)
 
 	// force commit newly appended entries
@@ -682,12 +683,52 @@ func getIDs(lg *zap.Logger, snap *raftpb.Snapshot, ents []raftpb.Entry) []uint64
 	return []uint64(sids)
 }
 
+func createBumpAndCompactionEnts(bumpAmount uint64, markCompacted bool, term uint64, next uint64) []raftpb.Entry {
+	var ents []raftpb.Entry
+	if bumpAmount > 0 {
+		for i := uint64(0); i < bumpAmount; i++ {
+			raftReq := &pb.InternalRaftRequest{
+				Header: &pb.RequestHeader{ID: 0},
+				Put:    &pb.PutRequest{Key: []byte{0}, Value: make([]byte, 0)},
+			}
+			e := raftpb.Entry{
+				Type:  raftpb.EntryNormal,
+				Data:  pbutil.MustMarshal(raftReq),
+				Term:  term,
+				Index: next,
+			}
+			ents = append(ents, e)
+			next = next + 1
+		}
+	}
+
+	if markCompacted {
+		raftReq := &pb.InternalRaftRequest{
+			Header: &pb.RequestHeader{ID: 0},
+			Compaction: &pb.CompactionRequest{
+				// TODO this requires the last write revision, after bumping, this is not the raft index
+				Revision: int64(next),
+			},
+		}
+
+		e := raftpb.Entry{
+			Type:  raftpb.EntryNormal,
+			Data:  pbutil.MustMarshal(raftReq),
+			Term:  term,
+			Index: next,
+		}
+		ents = append(ents, e)
+	}
+
+	return ents
+}
+
 // createConfigChangeEnts creates a series of Raft entries (i.e.
 // EntryConfChange) to remove the set of given IDs from the cluster. The ID
 // `self` is _not_ removed, even if present in the set.
 // If `self` is not inside the given ids, it creates a Raft entry to add a
 // default member with the given `self`.
-func createConfigChangeEnts(lg *zap.Logger, ids []uint64, self uint64, term, index uint64) []raftpb.Entry {
+func createConfigChangeEnts(lg *zap.Logger, ids []uint64, self uint64, term, index uint64) ([]raftpb.Entry, uint64) {
 	found := false
 	for _, id := range ids {
 		if id == self {
@@ -742,5 +783,5 @@ func createConfigChangeEnts(lg *zap.Logger, ids []uint64, self uint64, term, ind
 		next++
 	}
 
-	return ents
+	return ents, next
 }
