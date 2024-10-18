@@ -312,7 +312,6 @@ func newConfig() *config {
 	fs.BoolVar(&cfg.ec.UnsafeNoFsync, "unsafe-no-fsync", false, "Disables fsync, unsafe, will cause data loss.")
 	fs.BoolVar(&cfg.ec.ForceNewCluster, "force-new-cluster", false, "Force to create a new one member cluster.")
 	fs.Uint64Var(&cfg.ec.ForceNewClusterBumpAmount, "force-new-cluster-bump-amount", 0, "How much to increase the latest revision after --force-new-cluster.")
-	fs.BoolVar(&cfg.ec.ForceNewClusterMarkCompacted, "force-new-cluster-mark-compacted", false, "Mark the latest revision after restore as the point of scheduled compaction after --force-new-cluster.")
 
 	// ignored
 	for _, f := range cfg.ignored {
