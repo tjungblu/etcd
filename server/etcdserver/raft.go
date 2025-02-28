@@ -628,6 +628,7 @@ func restartAsStandaloneNode(cfg config.ServerConfig, snapshot *raftpb.Snapshot,
 	)
 
 	cl := membership.NewCluster(cfg.Logger, membership.WithMaxLearners(cfg.ExperimentalMaxLearners))
+	cid += types.ID(time.Now().UnixMilli())
 	cl.SetID(id, cid)
 	s := raft.NewMemoryStorage()
 	if snapshot != nil {
