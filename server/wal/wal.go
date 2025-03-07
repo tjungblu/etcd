@@ -932,7 +932,7 @@ func (w *WAL) SaveWithMetadata(st raftpb.HardState, ents []raftpb.Entry, metadat
 	defer w.mu.Unlock()
 
 	// short cut, do not call sync
-	if raft.IsEmptyHardState(st) && len(ents) == 0 {
+	if metadata == nil && raft.IsEmptyHardState(st) && len(ents) == 0 {
 		return nil
 	}
 
@@ -946,9 +946,7 @@ func (w *WAL) SaveWithMetadata(st raftpb.HardState, ents []raftpb.Entry, metadat
 	}
 
 	if metadata != nil {
-		b := pbutil.MustMarshal(metadata)
-		rec := &walpb.Record{Type: metadataType, Data: b}
-		if err := w.encoder.encode(rec); err != nil {
+		if err := w.SaveMetadata(metadata); err != nil {
 			return err
 		}
 	}
