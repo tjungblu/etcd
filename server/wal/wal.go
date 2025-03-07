@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"hash/crc32"
 	"io"
 	"os"
@@ -912,7 +913,20 @@ func (w *WAL) saveState(s *raftpb.HardState) error {
 	return w.encoder.encode(rec)
 }
 
+func (w *WAL) SaveMetadata(metadata *etcdserverpb.Metadata) error {
+	b := pbutil.MustMarshal(metadata)
+	rec := &walpb.Record{Type: metadataType, Data: b}
+	if err := w.encoder.encode(rec); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (w *WAL) Save(st raftpb.HardState, ents []raftpb.Entry) error {
+	return w.SaveWithMetadata(st, ents, nil)
+}
+
+func (w *WAL) SaveWithMetadata(st raftpb.HardState, ents []raftpb.Entry, metadata *etcdserverpb.Metadata) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -929,6 +943,15 @@ func (w *WAL) Save(st raftpb.HardState, ents []raftpb.Entry) error {
 			return err
 		}
 	}
+
+	if metadata != nil {
+		b := pbutil.MustMarshal(metadata)
+		rec := &walpb.Record{Type: metadataType, Data: b}
+		if err := w.encoder.encode(rec); err != nil {
+			return err
+		}
+	}
+
 	if err := w.saveState(&st); err != nil {
 		return err
 	}
