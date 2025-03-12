@@ -43,6 +43,7 @@ const (
 	stateType
 	crcType
 	snapshotType
+	metadataModType
 
 	// warnSyncDuration is the amount of time allotted to an fsync before
 	// logging a warning
@@ -63,6 +64,7 @@ var (
 	ErrSnapshotNotFound = errors.New("wal: snapshot not found")
 	ErrSliceOutOfRange  = errors.New("wal: slice bounds out of range")
 	ErrDecoderNotFound  = errors.New("wal: decoder not found")
+	ErrNoMetadata       = errors.New("wal: no metadata found")
 	crcTable            = crc32.MakeTable(crc32.Castagnoli)
 )
 
@@ -469,6 +471,18 @@ func (w *WAL) ReadAll() (metadata []byte, state raftpb.HardState, ents []raftpb.
 				return nil, state, nil, ErrMetadataConflict
 			}
 			metadata = rec.Data
+
+		case metadataModType:
+			if metadata == nil {
+				state.Reset()
+				return nil, state, nil, ErrNoMetadata
+			}
+
+			var meta, metaMod etcdserverpb.Metadata
+			pbutil.MustUnmarshal(&meta, metadata)
+			pbutil.MustUnmarshal(&metaMod, rec.Data)
+			meta.ClusterID = metaMod.ClusterID
+			metadata = pbutil.MustMarshal(&meta)
 
 		case crcType:
 			crc := decoder.crc.Sum32()
@@ -916,7 +930,7 @@ func (w *WAL) saveState(s *raftpb.HardState) error {
 
 func (w *WAL) SaveMetadata(metadata *etcdserverpb.Metadata) error {
 	b := pbutil.MustMarshal(metadata)
-	rec := &walpb.Record{Type: metadataType, Data: b}
+	rec := &walpb.Record{Type: metadataModType, Data: b}
 	if err := w.encoder.encode(rec); err != nil {
 		return err
 	}
