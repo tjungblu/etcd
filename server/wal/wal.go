@@ -22,7 +22,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -97,8 +96,6 @@ type WAL struct {
 
 	locks []*fileutil.LockedFile // the locked files the WAL holds (the name is increasing)
 	fp    *filePipeline
-
-	openshiftWarnFsyncDuration *time.Duration
 }
 
 // Create creates a WAL ready for appending records. The given metadata is
@@ -816,25 +813,11 @@ func (w *WAL) sync() error {
 		return nil
 	}
 
-	if w.openshiftWarnFsyncDuration == nil {
-		defaultWarnFsyncDuration := warnSyncDuration
-		w.openshiftWarnFsyncDuration = &defaultWarnFsyncDuration
-		if warnFsyncDurationOverride := os.Getenv("OPENSHIFT_WARN_FSYNC_DURATION"); warnFsyncDurationOverride != "" {
-			override, err := strconv.Atoi(warnFsyncDurationOverride)
-			if err != nil {
-				w.lg.Sugar().Infof("OPENSHIFT_WARN_FSYNC_DURATION specified but could not be parsed. falling back to default of %v. parse error: %v", warnSyncDuration, err)
-			} else {
-				openshiftWarnFsyncDuration := time.Duration(override) * time.Second
-				w.openshiftWarnFsyncDuration = &openshiftWarnFsyncDuration
-			}
-		}
-	}
-
 	start := time.Now()
 	err := fileutil.Fdatasync(w.tail().File)
 
 	took := time.Since(start)
-	if took > *w.openshiftWarnFsyncDuration {
+	if took > warnSyncDuration {
 		w.lg.Warn(
 			"slow fdatasync",
 			zap.Duration("took", took),
