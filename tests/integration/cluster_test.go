@@ -169,6 +169,76 @@ func TestForceNewCluster(t *testing.T) {
 	clusterMustProgress(t, c.Members[:1])
 }
 
+func TestForceNewClusterOnRemovedNode(t *testing.T) {
+	integration.BeforeTest(t)
+	c := integration.NewCluster(t, &integration.ClusterConfig{Size: 3, UseBridge: true})
+	defer c.Terminate(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), integration.RequestTimeout)
+	resp, err := c.Members[0].Client.Put(ctx, "/foo", "bar")
+	if err != nil {
+		t.Fatalf("unexpected create error: %v", err)
+	}
+	cancel()
+	// ensure create has been applied in this machine
+	ctx, cancel = context.WithTimeout(context.Background(), integration.RequestTimeout)
+	watch := c.Members[0].Client.Watcher.Watch(ctx, "/foo", clientv3.WithRev(resp.Header.Revision-1))
+	for resp := range watch {
+		if len(resp.Events) != 0 {
+			break
+		}
+		if resp.Err() != nil {
+			t.Fatalf("unexpected watch error: %q", resp.Err())
+		}
+		if resp.Canceled {
+			t.Fatalf("watch  cancelled")
+		}
+	}
+	cancel()
+
+	// membership changes additionally require cluster to be stable for etcdserver.HealthInterval
+	time.Sleep(etcdserver.HealthInterval)
+
+	ctx, cancel = context.WithTimeout(context.Background(), integration.RequestTimeout)
+	cc, err := c.ClusterClient(t)
+	if err != nil {
+		t.Fatalf("unexpected error while getting cluster client: %v", err)
+	}
+	_, err = cc.MemberRemove(ctx, uint64(c.Members[0].ID()))
+	if err != nil {
+		t.Fatalf("unexpected error while removing member 0: %v", err)
+	}
+	cancel()
+
+	c.Members[0].Stop(t)
+	c.Members[1].Terminate(t)
+	c.Members[2].Terminate(t)
+	c.Members[0].ForceNewCluster = true
+	err = c.Members[0].Restart(t)
+	if err != nil {
+		t.Fatalf("unexpected ForceRestart error: %v", err)
+	}
+	c.WaitMembersForLeader(t, c.Members[:1])
+
+	// use new http client to init new connection
+	// ensure force restart keep the old data, and new Cluster can make progress
+	ctx, cancel = context.WithTimeout(context.Background(), integration.RequestTimeout)
+	watch = c.Members[0].Client.Watcher.Watch(ctx, "/foo", clientv3.WithRev(resp.Header.Revision-1))
+	for resp := range watch {
+		if len(resp.Events) != 0 {
+			break
+		}
+		if resp.Err() != nil {
+			t.Fatalf("unexpected watch error: %q", resp.Err())
+		}
+		if resp.Canceled {
+			t.Fatalf("watch  cancelled")
+		}
+	}
+	cancel()
+	clusterMustProgress(t, c.Members[:1])
+}
+
 func TestAddMemberAfterClusterFullRotation(t *testing.T) {
 	integration.BeforeTest(t)
 	c := integration.NewCluster(t, &integration.ClusterConfig{Size: 3, DisableStrictReconfigCheck: true})
