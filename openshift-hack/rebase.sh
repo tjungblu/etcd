@@ -7,26 +7,20 @@
 #
 # The usage is described in /REBASE.openshift.md.
 
-# validate input args --etcd-tag=v3.5.4 --openshift-release=openshift-4.12 --jira-id=666
+# validate input args --etcd-tag=v3.6.6 --jira-id=666
 etcd_tag=""
-openshift_release=""
 jira_id=""
 
 usage() {
   echo "Available arguments:"
-  echo "  --etcd-tag            (required) Example: --etcd-tag=v3.4.20"
-  echo "  --openshift-release   (required) Example: --openshift-release=openshift-4.12"
-  echo "  --jira-id             (optional) creates new PR against openshift/etcd:${openshift-release}: Example: --jira-id=666"
+  echo "  --etcd-tag            (required) Example: --etcd-tag=v3.6.6"
+  echo "  --jira-id             (optional) creates new PR against openshift/etcd: Example: --jira-id=666"
 }
 
 for i in "$@"; do
   case $i in
   --etcd-tag=*)
     etcd_tag="${i#*=}"
-    shift
-    ;;
-  --openshift-release=*)
-    openshift_release="${i#*=}"
     shift
     ;;
   --jira-id=*)
@@ -47,16 +41,8 @@ if [ -z "${etcd_tag}" ]; then
   exit 1
 fi
 
-if [ -z "${openshift_release}" ]; then
-  echo "Required argument missing: --openshift-release"
-  echo ""
-  usage
-  exit 1
-fi
-
 echo "Processed arguments are:"
 echo "--etcd_tag=${etcd_tag}"
-echo "--openshift_release=${openshift_release}"
 echo "--jira_id=${jira_id}"
 
 # prerequisites (check git, podman, ... is present)
@@ -95,9 +81,10 @@ git remote add openshift git@github.com:openshift/etcd.git
 git fetch openshift
 
 # clean checkout of the remote openshift release
-git branch -D "openshift/$openshift_release"
-git checkout --track "openshift/$openshift_release"
-git pull openshift "$openshift_release"
+git checkout -b "rebase_tmp_${etcd_tag}"
+git branch -D "main"
+git checkout --track "openshift/main"
+git pull openshift main
 
 # that should give us the latest (or highest version) etcd tag
 # This is a bit experimental for the future, but works across all the current release branches
@@ -109,8 +96,8 @@ fi
 
 echo "running: \`git rebase --rebase-merges --fork-point $etcd_forkpoint $etcd_tag\`"
 git rebase --rebase-merges --fork-point "$etcd_forkpoint" "$etcd_tag"
-echo "running: \`git merge $openshift_release\`"
-git merge "$openshift_release"
+echo "running: \`git merge main\`"
+git merge main
 
 # shellcheck disable=SC2181
 if [ $? -eq 0 ]; then
@@ -134,12 +121,11 @@ else
 fi
 
 # ensure we always use the correct openshift release + golang combination
-go_mod_go_ver=$(grep -E 'go 1\.[1-9][0-9]?' go.mod | sed -E 's/go (1\.[1-9][0-9]?)/\1/')
-tag="rhel-8-release-golang-${go_mod_go_ver}-openshift-${openshift_release#release-}"
+img_tag=$(cat Dockerfile.art | head -n1 | sed -n 's/^FROM .*:\([^ ]*\) AS builder/\1/p')
 echo "> go mod tidy"
 podman run -it --rm -v "$(pwd):/go/etcd:Z" \
   --workdir=/go/etcd \
-  "registry.ci.openshift.org/openshift/release:$tag" \
+  "registry.ci.openshift.org/openshift/release:$img_tag" \
   go mod tidy
 
 # shellcheck disable=SC2181
@@ -152,7 +138,7 @@ git add -A
 git commit -m "UPSTREAM: <drop>: go mod tidy"
 
 remote_branch="rebase-$etcd_tag"
-git push origin "$openshift_release:$remote_branch"
+git push origin "main:$remote_branch"
 
 XY=$(echo "$etcd_tag" | sed -E "s/v(1\.[0-9]+)\.[0-9]+/\1/")
 ver=$(echo "$etcd_tag" | sed "s/\.//g")
